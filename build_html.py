@@ -635,7 +635,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="tab active" data-tab="types">속성별</div>
         <div class="tab" data-tab="gl">슈퍼리그</div>
         <div class="tab" data-tab="ul">하이퍼리그</div>
-        <div class="tab" data-tab="ml">마스터·레이드</div>
+        <div class="tab" data-tab="ml">마스터리그</div>
+        <div class="tab" data-tab="raids">레이드</div>
         <div class="tab" data-tab="lc">리틀컵</div>
         <div class="tab" data-tab="cups">컵 시즌</div>
         <div class="tab" data-tab="search">검색</div>
@@ -1291,7 +1292,7 @@ function renderLeagueTab(ctxKey, ctxLabel, ctxKeys, opts) {
   html += `<table><thead><tr>
     <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th>
     ${showIVs ? '<th>슈퍼 IV</th><th>하이퍼 IV</th>' : ''}
-    <th>추천 기술</th><th>겹침 등장</th>
+    <th>추천 기술</th><th>비고</th>
   </tr></thead><tbody>`;
   for (const sp of list) {
     const r = isRaid ? bestRaidRank(sp) : bestRankIn(sp, ctxKeys);
@@ -1312,11 +1313,102 @@ function renderLeagueTab(ctxKey, ctxLabel, ctxKeys, opts) {
       <td>${sp.types.map(badge).join(' ')}</td>
       ${ivCells}
       <td>${moveStr}</td>
-      <td>${overlapBadges(sp, ctxKey)}</td>
+      <td>${extraInfoBadges(sp, ctxKey)}</td>
     </tr>`;
   }
   html += `</tbody></table>`;
   return html;
+}
+
+// 레이드 — 보스별 그룹 + 보스 약점 + 카운터 Top 8
+function renderRaidsView() {
+  const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite','T3','T1',
+                     'T5*','T5sh*','Mega*','MegaT5*','UB*'];
+  const titles = {
+    T5:'현재 5성', T5sh:'현재 쉐도우 5성', Mega:'현재 메가', MegaT5:'메가 5성',
+    UB:'울트라비스트', Elite:'엘리트', T3:'현재 3성', T1:'현재 1성',
+    'T5*':'예정 5성', 'T5sh*':'예정 쉐도우 5성', 'Mega*':'예정 메가',
+    'MegaT5*':'예정 메가 5성', 'UB*':'예정 울트라비스트',
+  };
+  const grouped = {};
+  for (const b of Object.values(DATA.bosses)) {
+    if (state.typeFilter && !b.boss_types.includes(state.typeFilter)) continue;
+    if (state.q && !b._search.includes(state.q)) continue;
+    if (!grouped[b.tier_en]) grouped[b.tier_en] = [];
+    grouped[b.tier_en].push(b);
+  }
+  let total = 0;
+  let html = `<div class="iv-note">레이드 — 모든 카운터는 100% IV (Lv50 15/15/15) 우선. 보스 약점 클릭하면 그 속성으로 강하게 때릴 수 있는 곳들.</div>`;
+  for (const tier of tierOrder) {
+    const list = grouped[tier];
+    if (!list || !list.length) continue;
+    list.sort((a,b) => (a.boss_dex||9999) - (b.boss_dex||9999));
+    total += list.length;
+    html += `<div class="section-h">${titles[tier]||tier} (${list.length})</div>`;
+    for (const b of list) {
+      const dex = b.boss_dex && b.boss_dex < 9999 ?
+                  `<span class="dex">#${String(b.boss_dex).padStart(3,'0')}</span> ` : '';
+      html += `<div class="boss-head">
+        <h3>${dex}${b.boss_ko} <span class="en">/ ${b.boss_en}</span></h3>
+        <span>${b.boss_types.map(badge).join(' ')}</span>
+        <span class="weak">약점: ${multBadges(b.boss_weak)||'없음'}</span>
+      </div>
+      <table><thead><tr><th>#</th><th>Dex</th><th>카운터</th><th>속성</th><th>추천 기술</th><th>비고</th></tr></thead>
+        <tbody>${b.counters.map(c => {
+          const sp = DATA.species[c.sid];
+          const types = sp ? sp.types.map(badge).join(' ') : '';
+          const note = sp ? extraInfoBadges(sp, 'Raid') : '';
+          return `<tr>
+            <td class="rank">${c.rank}</td>
+            <td class="num">${sp ? String(sp.dex).padStart(3,'0') : ''}</td>
+            <td>${sp ? nameKo(sp) : c.ko}<br><span class="en">${c.en}</span></td>
+            <td>${types}</td>
+            <td>${moveSplitHtml(c.fast_ko, c.fast_en, c.charged_ko, c.charged_en)}</td>
+            <td>${note}</td>
+          </tr>`;
+        }).join('')}</tbody></table>`;
+    }
+  }
+  if (!total) return `<div class="empty">결과 없음</div>`;
+  return `<div class="stat">${total} 보스</div>` + html;
+}
+
+// "비고" 컬럼 — 다른 등장처 모두 (컵 포함, 풀로 표시)
+function extraInfoBadges(sp, exceptCtx) {
+  const out = [];
+  if (exceptCtx !== 'GL') {
+    const r = bestRankIn(sp, GL_KEYS);
+    if (r && r.rank <= 15) out.push(`<span class="ovl ovl-gl">슈퍼 #${r.rank}</span>`);
+  }
+  if (exceptCtx !== 'UL') {
+    const r = bestRankIn(sp, UL_KEYS);
+    if (r && r.rank <= 15) out.push(`<span class="ovl ovl-ul">하이퍼 #${r.rank}</span>`);
+  }
+  if (exceptCtx !== 'ML') {
+    const r = bestRankIn(sp, ML_KEYS);
+    if (r && r.rank <= 15) out.push(`<span class="ovl ovl-ml">마스터 #${r.rank}</span>`);
+  }
+  if (exceptCtx !== 'LC') {
+    const r = bestRankIn(sp, LC_KEYS);
+    if (r && r.rank <= 10) out.push(`<span class="ovl ovl-lc">리틀 #${r.rank}</span>`);
+  }
+  if (exceptCtx !== 'Raid') {
+    const r = bestRaidRank(sp);
+    if (r && r.is_essential_tier && r.rank <= 5)
+      out.push(`<span class="ovl ovl-raid">vs ${r.boss_ko} #${r.rank}(${r.tier_ko})</span>`);
+  }
+  // 컵들 — 모두 나열
+  if (exceptCtx !== 'Cup') {
+    const cups = sp.pvp.filter(p =>
+      !GL_KEYS.has(p.league_key) && !UL_KEYS.has(p.league_key) &&
+      !ML_KEYS.has(p.league_key) && !LC_KEYS.has(p.league_key) &&
+      p.rank <= 15
+    ).sort((a,b) => a.rank - b.rank);
+    cups.forEach(c => {
+      out.push(`<span class="ovl ovl-cup">${c.league_ko} #${c.rank}</span>`);
+    });
+  }
+  return out.length ? `<div class="ovl-list">${out.join('')}</div>` : '<span class="muted">—</span>';
 }
 
 function renderCups() {
@@ -1337,7 +1429,7 @@ function renderCups() {
     html += `<div class="section-h">${lg.ko} <span class="en">(${lg.en}, CP ${cap})</span></div>`;
     html += `<table><thead><tr>
       <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th>
-      <th>슈퍼 IV</th><th>하이퍼 IV</th><th>추천 기술</th><th>겹침 등장</th>
+      <th>슈퍼 IV</th><th>하이퍼 IV</th><th>추천 기술</th><th>비고</th>
     </tr></thead><tbody>`;
     for (const e of entries) {
       const sp = DATA.species[e.sid];
@@ -1349,7 +1441,7 @@ function renderCups() {
         <td>${ivCellGL(sp)}</td>
         <td>${ivCellUL(sp)}</td>
         <td>${moveSplitFromEntry(e)}</td>
-        <td>${overlapBadges(sp, 'Cup')}</td>
+        <td>${extraInfoBadges(sp, 'Cup')}</td>
       </tr>`;
     }
     html += `</tbody></table>`;
@@ -1364,12 +1456,8 @@ function render() {
   if (state.tab === 'types') html = renderTypes();
   else if (state.tab === 'gl') html = renderLeagueTab('GL', '슈퍼리그 (Great League)', GL_KEYS, {cap:30});
   else if (state.tab === 'ul') html = renderLeagueTab('UL', '하이퍼리그 (Ultra League)', UL_KEYS, {cap:30});
-  else if (state.tab === 'ml') html =
-    `<div class="iv-note">마스터리그 + 레이드는 모두 100% IV (15/15/15) 우선 — IV 컬럼 생략</div>` +
-    `<div class="section-h">마스터리그 핵심</div>` +
-    renderLeagueTab('ML', '마스터리그 (Master League)', ML_KEYS, {cap:25}) +
-    `<div class="section-h">레이드 카운터 (현재 + 가까운 미래)</div>` +
-    renderLeagueTab('Raid', '레이드 카운터', null, {cap:30});
+  else if (state.tab === 'ml') html = renderLeagueTab('ML', '마스터리그 (Master League)', ML_KEYS, {cap:30});
+  else if (state.tab === 'raids') html = renderRaidsView();
   else if (state.tab === 'lc') html = renderLeagueTab('LC', '리틀컵 (Little)', LC_KEYS, {cap:25});
   else if (state.tab === 'cups') html = renderCups();
   else if (state.tab === 'search') html = renderTriage();
