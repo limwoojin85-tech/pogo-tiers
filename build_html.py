@@ -1083,7 +1083,7 @@ function paginate(list, renderFn, perPage) {
 
 // ━━━━━━ 레이드 ━━━━━━
 function renderRaids() {
-  const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite','T3','T1',
+  const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite',
                      'T5*','T5sh*','Mega*','MegaT5*','UB*'];
   const titles = {
     T5:'현재 5성', T5sh:'현재 쉐도우 5성', Mega:'현재 메가', MegaT5:'메가 5성',
@@ -1322,7 +1322,7 @@ function renderLeagueTab(ctxKey, ctxLabel, ctxKeys, opts) {
 
 // 레이드 — 보스별 그룹 + 보스 약점 + 카운터 Top 8
 function renderRaidsView() {
-  const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite','T3','T1',
+  const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite',
                      'T5*','T5sh*','Mega*','MegaT5*','UB*'];
   const titles = {
     T5:'현재 5성', T5sh:'현재 쉐도우 5성', Mega:'현재 메가', MegaT5:'메가 5성',

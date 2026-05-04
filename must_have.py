@@ -65,8 +65,6 @@ LEAGUE_KO = {
 }
 
 TIER_LABEL = {
-    "RAID_LEVEL_1": ("1성", "T1"),
-    "RAID_LEVEL_3": ("3성", "T3"),
     "RAID_LEVEL_5": ("5성", "T5"),
     "RAID_LEVEL_5_FUTURE": ("5성 (예정)", "T5*"),
     "RAID_LEVEL_5_SHADOW": ("쉐도우 5성", "T5sh"),

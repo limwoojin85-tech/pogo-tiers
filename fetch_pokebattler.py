@@ -22,11 +22,8 @@ COUNTERS_DIR.mkdir(parents=True, exist_ok=True)
 BASE = "https://fight.pokebattler.com"
 UA = {"User-Agent": "pogo-tiers-fetcher/1.0"}
 
-# 진짜 의미 있는 레이드 티어만 — 현재 활성 + 가까운 미래.
-# LEGACY (과거), UNSET (카탈로그), MAX (다이맥스) 등은 제외.
+# 4성 이상 — T1/T3 는 가치 없음 (거의 모든 포켓몬이 카운터)
 TIER_WHITELIST = {
-    "RAID_LEVEL_1",
-    "RAID_LEVEL_3",
     "RAID_LEVEL_5",
     "RAID_LEVEL_5_FUTURE",
     "RAID_LEVEL_5_SHADOW",
