@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.vscode/
+
+# 로컬 빌드 산출물 — Actions 가 매번 새로 받음
+out/
+data/pvpoke/*.json
+!data/pvpoke/.gitkeep
+data/pokebattler/counters/*.json
+data/pokebattler/tiers.json
+data/translations.json
