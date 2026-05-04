@@ -30,6 +30,7 @@ from must_have import (
     load_gamemaster,
     move_name_pair,
     pb_to_pvpoke_id,
+    prettify_name,
     species_ko_name,
 )
 from type_chart import weaknesses_resistances, ALL_TYPES, SE
@@ -390,6 +391,63 @@ def collect_all(species, moves, trans):
     for sid in species_out:
         species_out[sid]["essential"] = sid in essential_ids
 
+    # 박사 송출 후보 — 어디에도 속하지 못한 가족 (메타 변동 대비 1마리 보관 권장)
+    ranked_sids = {sid for sid, s in species_out.items() if s["pvp"] or s["raid"]}
+    family_of: dict[str, str] = {}
+    for p in gm["pokemon"]:
+        fid = (p.get("family") or {}).get("id") or p["speciesId"]
+        family_of[p["speciesId"]] = fid
+
+    ranked_families = {family_of[s] for s in ranked_sids if s in family_of}
+
+    # 가족별 그룹
+    families: dict[str, list[dict]] = defaultdict(list)
+    for p in gm["pokemon"]:
+        sid = p["speciesId"]
+        if not p.get("released", True):
+            continue
+        # 쉐도우는 일반 형태와 같은 가족이지만 분리해서 보여줌
+        fid = family_of.get(sid, sid)
+        if fid in ranked_families:
+            continue
+        # 메가/Z 형태는 진화 사슬에 포함 안 시킴 (특수 변형)
+        if "_mega" in sid or "_primal" in sid:
+            continue
+        families[fid].append({
+            "sid": sid,
+            "dex": p["dex"],
+            "name_en": prettify_name(p["speciesName"]),
+            "types": [t for t in p.get("types", []) if t and t != "none"],
+            "is_shadow": "_shadow" in sid,
+        })
+
+    transfer_groups = []
+    for fid, members in families.items():
+        members.sort(key=lambda x: (x["is_shadow"], x["dex"], x["sid"]))
+        # 가족 대표 = 진화 가장 마지막 (parent 가 없는 것의 자식 사슬 끝)
+        # 간단히: 가장 높은 dex 의 비-쉐도우
+        non_shadow = [m for m in members if not m["is_shadow"]]
+        keep_member = non_shadow[-1] if non_shadow else members[-1]
+        out_members = []
+        for m in members:
+            ko = species_ko_name(m["dex"], m["name_en"], trans)
+            out_members.append({
+                "sid": m["sid"], "dex": m["dex"],
+                "ko": ko, "en": m["name_en"],
+                "types": m["types"],
+                "is_shadow": m["is_shadow"],
+            })
+        keep_ko = species_ko_name(keep_member["dex"], keep_member["name_en"], trans)
+        transfer_groups.append({
+            "family_id": fid,
+            "keep_sid": keep_member["sid"],
+            "keep_ko": keep_ko,
+            "keep_en": keep_member["name_en"],
+            "keep_dex": keep_member["dex"],
+            "members": out_members,
+        })
+    transfer_groups.sort(key=lambda g: g["keep_dex"])
+
     # 등장한 종만 남김
     species_out = {sid: s for sid, s in species_out.items()
                    if s["pvp"] or s["raid"]}
@@ -449,6 +507,7 @@ def collect_all(species, moves, trans):
         "types": types_out,
         "types_ko": types_ko,
         "essentials_count": len(essential_ids),
+        "transfer_groups": transfer_groups,
     }
 
 
@@ -639,6 +698,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="tab" data-tab="raids">레이드</div>
         <div class="tab" data-tab="lc">리틀컵</div>
         <div class="tab" data-tab="cups">컵 시즌</div>
+        <div class="tab" data-tab="transfer">박사 송출</div>
         <div class="tab" data-tab="search">검색</div>
       </div>
     </div>
@@ -1320,6 +1380,57 @@ function renderLeagueTab(ctxKey, ctxLabel, ctxKeys, opts) {
   return html;
 }
 
+// 박사 송출 — 어디에도 속하지 못한 가족
+function renderTransfer() {
+  const groups = (DATA.transfer_groups || []).filter(g => {
+    if (state.q) {
+      const hay = (g.keep_ko + ' ' + g.keep_en + ' ' +
+                   g.members.map(m => m.ko + ' ' + m.en).join(' ')).toLowerCase();
+      if (!hay.includes(state.q)) return false;
+    }
+    if (state.typeFilter) {
+      return g.members.some(m => m.types.includes(state.typeFilter));
+    }
+    return true;
+  });
+
+  let html = `<div class="iv-note">
+    <b>가이드</b>: 어떤 리그·컵·레이드에도 등장하지 않는 가족들입니다.<br>
+    메타 변동 / 신규 컵 / 진화 추가 대비해서 <b>가족당 1마리만 보관</b> (가장 진화된 형태, 가능하면 좋은 IV 또는 Lucky), 나머지는 박사 송출.<br>
+    쉐도우는 따로 1마리 보관 (정화 사탕·Lucky 가치).
+  </div>`;
+  html += `<div class="stat">${groups.length} 가족 — Dex 순</div>`;
+
+  html += `<table><thead><tr>
+    <th>대표 Dex</th><th>보관 (1마리)</th><th>송출 OK (전부)</th>
+  </tr></thead><tbody>`;
+  for (const g of groups) {
+    const keepSp = DATA.species[g.keep_sid] || {ko: g.keep_ko, en: g.keep_en, types: []};
+    // 가족 대표 정보 — 가장 높은 진화의 메타데이터
+    const keepMember = g.members.find(m => m.sid === g.keep_sid) || g.members[g.members.length - 1];
+    const otherMembers = g.members.filter(m => m.sid !== g.keep_sid);
+    html += `<tr>
+      <td class="num">#${String(g.keep_dex).padStart(3,'0')}</td>
+      <td>
+        <b>${g.keep_ko}</b> <span class="en">/ ${g.keep_en}</span><br>
+        ${keepMember.types.map(badge).join(' ')}
+        <div class="muted" style="font-size:11px;margin-top:3px">100% 또는 Lucky 1마리만 보관</div>
+      </td>
+      <td>
+        ${otherMembers.length === 0
+          ? '<span class="muted">진화 없음 — 1마리만 보관</span>'
+          : otherMembers.map(m => {
+              const cls = m.is_shadow ? 'ovl ovl-raid' : 'ovl ovl-cup';
+              return `<span class="${cls}">#${String(m.dex).padStart(3,'0')} ${m.ko}${m.is_shadow?' (쉐)':''}</span>`;
+            }).join(' ')
+        }
+      </td>
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  return html;
+}
+
 // 레이드 — 보스별 그룹 + 보스 약점 + 카운터 Top 8
 function renderRaidsView() {
   const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite',
@@ -1460,6 +1571,7 @@ function render() {
   else if (state.tab === 'raids') html = renderRaidsView();
   else if (state.tab === 'lc') html = renderLeagueTab('LC', '리틀컵 (Little)', LC_KEYS, {cap:25});
   else if (state.tab === 'cups') html = renderCups();
+  else if (state.tab === 'transfer') html = renderTransfer();
   else if (state.tab === 'search') html = renderTriage();
   main.innerHTML = html;
   window.scrollTo(0, 0);
