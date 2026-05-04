@@ -54,7 +54,18 @@ def download(league: str, fname: str) -> Path:
     return out
 
 
+def fetch_gamemaster() -> None:
+    """gamemaster.json — 종 메타 + rank1 IV 등 핵심 메타데이터."""
+    url = "https://raw.githubusercontent.com/pvpoke/pvpoke/master/src/data/gamemaster.json"
+    out = OUT_DIR / "_gamemaster.json"
+    print("[pvpoke] gamemaster.json 다운로드")
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=120) as r:
+        out.write_bytes(r.read())
+
+
 def main() -> None:
+    fetch_gamemaster()
     leagues = list_leagues()
     print(f"[pvpoke] {len(leagues)} 리그/컵 발견")
 
