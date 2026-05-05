@@ -36,6 +36,55 @@ from must_have import (
 from type_chart import weaknesses_resistances, ALL_TYPES, SE
 
 
+# 특수 진화 — 교환·버디·아이템·지역 한정
+# kind: trade(교환), buddy(버디 미션), item(진화 아이템), walk(걷기), region(지역 한정)
+SPECIAL_EVO: dict[str, tuple[str, str]] = {
+    # 교환 진화 — 친구 교환 시 사탕 0
+    "alakazam":      ("trade", "교환 시 사탕 0 (Kadabra→)"),
+    "machamp":       ("trade", "교환 시 사탕 0 (Machoke→)"),
+    "gengar":        ("trade", "교환 시 사탕 0 (Haunter→)"),
+    "golem":         ("trade", "교환 시 사탕 0 (Graveler→)"),
+    "golem_alolan":  ("trade", "교환 시 사탕 0"),
+    "kingdra":       ("trade", "교환 시 사탕 0 + 드래곤스케일"),
+    "scizor":        ("trade", "교환 시 사탕 0 + 메탈코트"),
+    "porygon2":      ("trade", "교환 시 사탕 0 + 업그레이드"),
+    "porygon_z":     ("trade", "교환 시 사탕 0 + 더비어스디스크"),
+    "slowking":      ("trade", "교환 시 사탕 0 + 왕의징표석"),
+    "politoed":      ("trade", "교환 시 사탕 0 + 왕의징표석"),
+    "steelix":       ("trade", "교환 시 사탕 0 + 메탈코트"),
+    "huntail":       ("trade", "교환 시 사탕 0 + 딥씨톱니"),
+    "gorebyss":      ("trade", "교환 시 사탕 0 + 딥씨비늘"),
+    "rhyperior":     ("trade", "교환 시 사탕 0 + 별의조각"),
+    "magnezone":     ("trade", "교환 시 사탕 0 + 마그네틱 모듈"),
+    "electivire":    ("trade", "교환 시 사탕 0 + 엘렉트로이저"),
+    "magmortar":     ("trade", "교환 시 사탕 0 + 매그마라이저"),
+    "dusknoir":      ("trade", "교환 시 사탕 0 + 저주의갑옷"),
+    "annihilape":    ("buddy", "성난원숭이 + 라이지컬 30회 + 사탕 100"),
+    # 버디 / 워크 진화
+    "milotic":       ("walk",  "버디로 20km 걷기 + 사탕 100"),
+    "leafeon":       ("item",  "이끼 루어 모듈 + 사탕 25 (이브이)"),
+    "glaceon":       ("item",  "얼음 루어 모듈 + 사탕 25 (이브이)"),
+    "sylveon":       ("buddy", "버디 하트 70 + 사탕 25 (이브이)"),
+    "espeon":        ("buddy", "낮 + 버디 10km + 사탕 25 (이브이)"),
+    "umbreon":       ("buddy", "밤 + 버디 10km + 사탕 25 (이브이)"),
+    # 지역 한정
+    "mr_mime":       ("region", "유럽 지역 한정"),
+    "kangaskhan":    ("region", "호주 지역 한정"),
+    "tauros":        ("region", "북미 지역 한정"),
+    "farfetchd":     ("region", "한국·일본 지역 한정"),
+    "heracross":     ("region", "남미·중미 지역 한정"),
+    "corsola":       ("region", "적도 지역 한정"),
+    "relicanth":     ("region", "뉴질랜드 한정"),
+    "torkoal":       ("region", "인도·남아시아 한정"),
+    "lunatone":      ("region", "북반구 한정"),
+    "solrock":       ("region", "남반구 한정"),
+    "tropius":       ("region", "아프리카 한정"),
+    "pachirisu":     ("region", "북부 한정"),
+    "carnivine":     ("region", "미국 동남부 한정"),
+    "chatot":        ("region", "남반구 한정"),
+}
+
+
 # 투자 가이드 — 어느 IV 등급까지 모을 가치 있는지 결정
 def invest_guide(sp: dict) -> dict:
     """
@@ -188,12 +237,20 @@ def collect_all(species, moves, trans):
     gm = json.loads((PVPOKE / "_gamemaster.json").read_text(encoding="utf-8"))
     parent_map: dict[str, str] = {}
     rank1_iv_map: dict[str, dict] = {}
+    all_sids: set[str] = set()
     for p in gm["pokemon"]:
+        all_sids.add(p["speciesId"])
         fam = p.get("family") or {}
         parent = fam.get("parent")
         if parent:
             parent_map[p["speciesId"]] = parent
         rank1_iv_map[p["speciesId"]] = p.get("defaultIVs") or {}
+
+    def has_mega_form(sid: str) -> list[str]:
+        """이 종이 메가/원시 진화 가능한지 — 가능한 폼 sid 리스트."""
+        candidates = [f"{sid}_mega", f"{sid}_mega_x", f"{sid}_mega_y",
+                      f"{sid}_mega_z", f"{sid}_primal"]
+        return [c for c in candidates if c in all_sids]
 
     def evolution_chain(sid: str) -> list[str]:
         """[base, ..., current] — 진화 사슬 (현재 포함)."""
@@ -232,6 +289,28 @@ def collect_all(species, moves, trans):
                 rank1[label] = {
                     "lv": v[0], "atk": v[1], "def": v[2], "sta": v[3],
                 }
+        # 특수 진화 — 자기 자신 또는 이 가족의 최종 진화에 적용된 메서드
+        evo_kind = None
+        evo_note = None
+        if sid in SPECIAL_EVO:
+            evo_kind, evo_note = SPECIAL_EVO[sid]
+        else:
+            # 진화 후 형태가 special evo 라면 표시 (에를들면 kadabra 의 진화는 alakazam 이고 alakazam 이 trade)
+            for child_sid, child_evo in SPECIAL_EVO.items():
+                # parent_map[child_sid] 가 sid 이거나, 자손
+                cur = child_sid
+                depth = 0
+                while cur in parent_map and depth < 5:
+                    if parent_map[cur] == sid:
+                        evo_kind, evo_note = child_evo
+                        break
+                    cur = parent_map[cur]
+                    depth += 1
+                if evo_kind:
+                    break
+
+        mega_forms = has_mega_form(sid)
+
         species_out[sid] = {
             "id": sid,
             "dex": info["dex"],
@@ -243,6 +322,9 @@ def collect_all(species, moves, trans):
             "chain_ko": chain_kos,
             "chain_en": chain_ens,
             "rank1_iv": rank1,
+            "evo_kind": evo_kind,    # trade/buddy/walk/item/region/None
+            "evo_note": evo_note,
+            "mega_forms": mega_forms,  # 이 종이 메가 가능한지 — 폼 sid 리스트
             "pvp": [],
             "raid": [],
         }
@@ -391,62 +473,106 @@ def collect_all(species, moves, trans):
     for sid in species_out:
         species_out[sid]["essential"] = sid in essential_ids
 
-    # 박사 송출 후보 — 어디에도 속하지 못한 가족 (메타 변동 대비 1마리 보관 권장)
+    # 박사 송출 / 메가 보관 후보 분류
     ranked_sids = {sid for sid, s in species_out.items() if s["pvp"] or s["raid"]}
     family_of: dict[str, str] = {}
+    # 1차: pvpoke gamemaster 의 family.id
     for p in gm["pokemon"]:
-        fid = (p.get("family") or {}).get("id") or p["speciesId"]
-        family_of[p["speciesId"]] = fid
+        fid = (p.get("family") or {}).get("id")
+        if fid:
+            family_of[p["speciesId"]] = fid
 
-    ranked_families = {family_of[s] for s in ranked_sids if s in family_of}
-
-    # 가족별 그룹
-    families: dict[str, list[dict]] = defaultdict(list)
+    # 2차: family 가 None 인 mega/primal — 베이스 sid 의 family 로 백필
     for p in gm["pokemon"]:
         sid = p["speciesId"]
-        if not p.get("released", True):
+        if sid in family_of:
             continue
-        # 쉐도우는 일반 형태와 같은 가족이지만 분리해서 보여줌
-        fid = family_of.get(sid, sid)
-        if fid in ranked_families:
-            continue
-        # 메가/Z 형태는 진화 사슬에 포함 안 시킴 (특수 변형)
-        if "_mega" in sid or "_primal" in sid:
-            continue
-        families[fid].append({
-            "sid": sid,
-            "dex": p["dex"],
-            "name_en": prettify_name(p["speciesName"]),
-            "types": [t for t in p.get("types", []) if t and t != "none"],
-            "is_shadow": "_shadow" in sid,
-        })
+        base = re.sub(r"_(mega(_[xyz])?|primal)$", "", sid)
+        if base != sid and base in family_of:
+            family_of[sid] = family_of[base]
+        else:
+            family_of[sid] = sid  # 여전히 모르면 자기 자신을 family
+
+    family_members: dict[str, list[str]] = defaultdict(list)
+    for sid, fid in family_of.items():
+        family_members[fid].append(sid)
+
+    # 각 가족마다 분류:
+    #   "transfer": 어디에도 안 쓰임 — 송출 OK (가족당 1마리만 보관 권장)
+    #   "mega_keep": 메가/원시만 쓰이고 베이스/일반은 안 쓰임 — 메가 변신 위해 보관 필수
+    #   "ranked":   일반 형태가 ranked — 별도 처리 X (다른 탭에 이미 나옴)
+    def is_special_form(s: str) -> bool:
+        return "_mega" in s or "_primal" in s
 
     transfer_groups = []
-    for fid, members in families.items():
-        members.sort(key=lambda x: (x["is_shadow"], x["dex"], x["sid"]))
-        # 가족 대표 = 진화 가장 마지막 (parent 가 없는 것의 자식 사슬 끝)
-        # 간단히: 가장 높은 dex 의 비-쉐도우
-        non_shadow = [m for m in members if not m["is_shadow"]]
-        keep_member = non_shadow[-1] if non_shadow else members[-1]
-        out_members = []
-        for m in members:
-            ko = species_ko_name(m["dex"], m["name_en"], trans)
-            out_members.append({
-                "sid": m["sid"], "dex": m["dex"],
-                "ko": ko, "en": m["name_en"],
-                "types": m["types"],
-                "is_shadow": m["is_shadow"],
+    mega_keep_groups = []
+
+    for fid, mids in family_members.items():
+        ranked_in_family = [s for s in mids if s in ranked_sids]
+        ranked_normal = [s for s in ranked_in_family if not is_special_form(s)]
+        ranked_mega = [s for s in ranked_in_family if is_special_form(s)]
+
+        # 멤버 메타 (쉐도우 + 일반 + 메가 모두 포함)
+        member_dicts = []
+        for mid in mids:
+            mp = next((x for x in gm["pokemon"] if x["speciesId"] == mid), None)
+            if not mp or not mp.get("released", True):
+                continue
+            ko = species_ko_name(mp["dex"], prettify_name(mp["speciesName"]), trans)
+            member_dicts.append({
+                "sid": mid, "dex": mp["dex"],
+                "ko": ko, "en": prettify_name(mp["speciesName"]),
+                "types": [t for t in mp.get("types", []) if t and t != "none"],
+                "is_shadow": "_shadow" in mid,
+                "is_mega": is_special_form(mid),
             })
-        keep_ko = species_ko_name(keep_member["dex"], keep_member["name_en"], trans)
-        transfer_groups.append({
-            "family_id": fid,
-            "keep_sid": keep_member["sid"],
-            "keep_ko": keep_ko,
-            "keep_en": keep_member["name_en"],
-            "keep_dex": keep_member["dex"],
-            "members": out_members,
-        })
+        if not member_dicts:
+            continue
+        member_dicts.sort(key=lambda x: (x["is_mega"], x["is_shadow"], x["dex"], x["sid"]))
+
+        # 가족의 최종 진화 (최고 dex 의 일반형)
+        normal_members = [m for m in member_dicts if not m["is_mega"] and not m["is_shadow"]]
+        keep_member = normal_members[-1] if normal_members else member_dicts[-1]
+
+        if not ranked_in_family:
+            # 박사 송출 — 어디에도 안 쓰임. 단 보관 1마리 + 특수 진화 / 메가 가능 표시
+            base_sid = keep_member["sid"]
+            base_evo = SPECIAL_EVO.get(base_sid)
+            mega_avail = []
+            for m in member_dicts:
+                if not m["is_mega"]:
+                    mega_avail.extend(has_mega_form(m["sid"]))
+            transfer_groups.append({
+                "family_id": fid,
+                "keep_sid": keep_member["sid"],
+                "keep_ko": keep_member["ko"],
+                "keep_en": keep_member["en"],
+                "keep_dex": keep_member["dex"],
+                "members": [m for m in member_dicts if not m["is_mega"]],
+                "evo_kind": base_evo[0] if base_evo else None,
+                "evo_note": base_evo[1] if base_evo else None,
+                "has_mega_unranked": bool(mega_avail),  # 메가가 있으나 ranked 는 아님
+            })
+        elif ranked_mega and not ranked_normal:
+            # 메가/원시만 쓰임 — 베이스 보관 필수 (메가 변신 재료)
+            mega_member = next((m for m in member_dicts if m["is_mega"]), None)
+            mega_keep_groups.append({
+                "family_id": fid,
+                "keep_sid": keep_member["sid"],
+                "keep_ko": keep_member["ko"],
+                "keep_en": keep_member["en"],
+                "keep_dex": keep_member["dex"],
+                "mega_ko": mega_member["ko"] if mega_member else "",
+                "mega_en": mega_member["en"] if mega_member else "",
+                "mega_types": mega_member["types"] if mega_member else [],
+                "members": [m for m in member_dicts if not m["is_mega"]],
+                "evo_kind": (SPECIAL_EVO.get(keep_member["sid"]) or (None,))[0],
+                "evo_note": (SPECIAL_EVO.get(keep_member["sid"]) or (None, None))[1],
+            })
+        # else: 일반 형태가 ranked — 다른 탭에 이미 노출
+
     transfer_groups.sort(key=lambda g: g["keep_dex"])
+    mega_keep_groups.sort(key=lambda g: g["keep_dex"])
 
     # 등장한 종만 남김
     species_out = {sid: s for sid, s in species_out.items()
@@ -508,6 +634,7 @@ def collect_all(species, moves, trans):
         "types_ko": types_ko,
         "essentials_count": len(essential_ids),
         "transfer_groups": transfer_groups,
+        "mega_keep_groups": mega_keep_groups,
     }
 
 
@@ -1380,51 +1507,99 @@ function renderLeagueTab(ctxKey, ctxLabel, ctxKeys, opts) {
   return html;
 }
 
-// 박사 송출 — 어디에도 속하지 못한 가족
+// 진화 방식 배지
+const EVO_BADGE = {
+  trade:  ['ovl-gl',   '교환 진화'],
+  buddy:  ['ovl-ml',   '버디 미션'],
+  walk:   ['ovl-ml',   '걷기 필요'],
+  item:   ['ovl-ul',   '아이템 진화'],
+  region: ['ovl-cup',  '지역 한정'],
+};
+function evoBadge(kind, note) {
+  if (!kind) return '';
+  const [cls, label] = EVO_BADGE[kind] || ['ovl-cup', kind];
+  return `<span class="ovl ${cls}" title="${note||''}">${label}${note ? ': ' + note : ''}</span>`;
+}
+
+// 박사 송출 — 두 섹션 (송출 가능 / 메가 보관)
 function renderTransfer() {
-  const groups = (DATA.transfer_groups || []).filter(g => {
+  const passes = (g) => {
     if (state.q) {
-      const hay = (g.keep_ko + ' ' + g.keep_en + ' ' +
+      const hay = (g.keep_ko + ' ' + g.keep_en + ' ' + (g.mega_ko||'') + ' ' + (g.mega_en||'') + ' ' +
                    g.members.map(m => m.ko + ' ' + m.en).join(' ')).toLowerCase();
       if (!hay.includes(state.q)) return false;
     }
     if (state.typeFilter) {
-      return g.members.some(m => m.types.includes(state.typeFilter));
+      return g.members.some(m => m.types.includes(state.typeFilter)) ||
+             (g.mega_types || []).includes(state.typeFilter);
     }
     return true;
-  });
+  };
 
-  let html = `<div class="iv-note">
-    <b>가이드</b>: 어떤 리그·컵·레이드에도 등장하지 않는 가족들입니다.<br>
-    메타 변동 / 신규 컵 / 진화 추가 대비해서 <b>가족당 1마리만 보관</b> (가장 진화된 형태, 가능하면 좋은 IV 또는 Lucky), 나머지는 박사 송출.<br>
-    쉐도우는 따로 1마리 보관 (정화 사탕·Lucky 가치).
+  const xfer = (DATA.transfer_groups || []).filter(passes);
+  const megaKeep = (DATA.mega_keep_groups || []).filter(passes);
+
+  let html = '';
+
+  // ─── 섹션 1: 메가 진화 보관 ───
+  if (megaKeep.length) {
+    html += `<div class="iv-note" style="background:#fff3d9;color:var(--pri2)">
+      <b>메가 진화 대비 보관</b> — 일반 형태는 안 쓰이지만 <b>메가/원시 형태가 핵심</b>이라
+      베이스를 보관해야 메가 에너지로 변신 가능. 가족당 1마리 (가능하면 100% IV).
+    </div>`;
+    html += `<div class="section-h">메가 진화 대비 보관 — ${megaKeep.length} 가족</div>`;
+    html += `<table><thead><tr>
+      <th>Dex</th><th>보관할 베이스</th><th>활약하는 메가/원시</th><th>진화 메모</th>
+    </tr></thead><tbody>`;
+    for (const g of megaKeep) {
+      html += `<tr>
+        <td class="num">#${String(g.keep_dex).padStart(3,'0')}</td>
+        <td>
+          <b>${g.keep_ko}</b> <span class="en">/ ${g.keep_en}</span><br>
+          <div class="muted" style="font-size:11px">100% IV 1마리 우선 보관</div>
+        </td>
+        <td>
+          <b>${g.mega_ko || '—'}</b> <span class="en">/ ${g.mega_en || ''}</span><br>
+          ${(g.mega_types || []).map(badge).join(' ')}
+        </td>
+        <td>${evoBadge(g.evo_kind, g.evo_note) || '<span class="muted">—</span>'}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  // ─── 섹션 2: 박사 송출 가능 ───
+  html += `<div class="iv-note">
+    <b>박사 송출 가능</b> — 어떤 리그·컵·레이드·메가에도 안 쓰이는 가족.<br>
+    메타 변동 대비 가족당 1마리 (최종 진화·100%·Lucky 우선) 보관 권장. 나머지는 송출 → 사탕.<br>
+    교환 진화·버디·지역 한정 표시된 건 진화 자체가 어렵거나 가치가 있을 수 있으니 참고.
   </div>`;
-  html += `<div class="stat">${groups.length} 가족 — Dex 순</div>`;
-
+  html += `<div class="section-h">박사 송출 가능 — ${xfer.length} 가족</div>`;
   html += `<table><thead><tr>
-    <th>대표 Dex</th><th>보관 (1마리)</th><th>송출 OK (전부)</th>
+    <th>Dex</th><th>보관 (1마리)</th><th>송출 OK</th><th>진화 메모</th>
   </tr></thead><tbody>`;
-  for (const g of groups) {
-    const keepSp = DATA.species[g.keep_sid] || {ko: g.keep_ko, en: g.keep_en, types: []};
-    // 가족 대표 정보 — 가장 높은 진화의 메타데이터
+  for (const g of xfer) {
     const keepMember = g.members.find(m => m.sid === g.keep_sid) || g.members[g.members.length - 1];
     const otherMembers = g.members.filter(m => m.sid !== g.keep_sid);
+    const notes = [];
+    if (g.evo_kind) notes.push(evoBadge(g.evo_kind, g.evo_note));
+    if (g.has_mega_unranked) notes.push(`<span class="ovl ovl-raid" title="메가 형태 존재 — 추후 핵심 가능성">메가 가능</span>`);
     html += `<tr>
       <td class="num">#${String(g.keep_dex).padStart(3,'0')}</td>
       <td>
         <b>${g.keep_ko}</b> <span class="en">/ ${g.keep_en}</span><br>
         ${keepMember.types.map(badge).join(' ')}
-        <div class="muted" style="font-size:11px;margin-top:3px">100% 또는 Lucky 1마리만 보관</div>
       </td>
       <td>
         ${otherMembers.length === 0
-          ? '<span class="muted">진화 없음 — 1마리만 보관</span>'
+          ? '<span class="muted">진화 없음</span>'
           : otherMembers.map(m => {
               const cls = m.is_shadow ? 'ovl ovl-raid' : 'ovl ovl-cup';
-              return `<span class="${cls}">#${String(m.dex).padStart(3,'0')} ${m.ko}${m.is_shadow?' (쉐)':''}</span>`;
+              return `<span class="${cls}">${m.ko}${m.is_shadow?' (쉐)':''}</span>`;
             }).join(' ')
         }
       </td>
+      <td>${notes.length ? notes.join(' ') : '<span class="muted">—</span>'}</td>
     </tr>`;
   }
   html += `</tbody></table>`;
