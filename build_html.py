@@ -233,6 +233,17 @@ def collect_all(species, moves, trans):
     moves_ko = trans["moves"]
     types_ko = trans.get("types_ko", {})
 
+    # archive 컵 — fetch_pvpoke 의 manifest 에서
+    archive_set: set[str] = set()
+    manifest_path = PVPOKE / "_manifest.json"
+    if manifest_path.exists():
+        try:
+            mf = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for fname in mf.get("archived_only", []):
+                archive_set.add(fname.removesuffix(".json"))
+        except Exception:
+            pass
+
     # 진화 부모 맵 + rank 1 IV (pvpoke gamemaster 에서)
     gm = json.loads((PVPOKE / "_gamemaster.json").read_text(encoding="utf-8"))
     parent_map: dict[str, str] = {}
@@ -342,16 +353,17 @@ def collect_all(species, moves, trans):
             continue
         league_key = f.stem
         ko, en = LEAGUE_KO.get(league_key, (league_key, league_key))
-        # 메이저인지 표시
         is_major = league_key in MAJOR_LEAGUES_KEYS
         cup_only = "_" in league_key and league_key not in {
             "all_500", "all_1500", "all_2500", "all_10000",
             "premier_500", "premier_1500", "premier_2500", "premier_10000",
             "little_500",
         }
+        is_archive = league_key in archive_set
         league_out = {
             "key": league_key, "ko": ko, "en": en,
             "is_major": is_major, "is_cup": cup_only,
+            "is_archive": is_archive,
             "entries": [],
         }
         for rank, mon in enumerate(data[:PVP_TOP_N], 1):
@@ -377,6 +389,7 @@ def collect_all(species, moves, trans):
                 "league_key": league_key,
                 "league_ko": ko, "league_en": en,
                 "is_major": is_major,
+                "is_archive": is_archive,
                 "rank": rank,
                 "fast_ko": fast_ko, "fast_en": fast_en,
                 "charged_ko": charged_ko, "charged_en": charged_en,
@@ -1701,25 +1714,31 @@ function renderCups() {
   const cupKeys = Object.keys(DATA.leagues).filter(k =>
     !GL_KEYS.has(k) && !UL_KEYS.has(k) && !ML_KEYS.has(k) && !LC_KEYS.has(k)
   );
-  let html = `<div class="iv-note">컵 시즌 한정 픽 — CP cap 에 맞는 IV (1500 컵 → 슈퍼 IV / 2500 컵 → 하이퍼 IV)</div>`;
-  let total = 0;
-  for (const key of cupKeys.sort()) {
+  // 활성 vs 과거 분리
+  const activeCups = cupKeys.filter(k => !DATA.leagues[k].is_archive).sort();
+  const archiveCups = cupKeys.filter(k => DATA.leagues[k].is_archive).sort();
+
+  let html = `<div class="iv-note">
+    컵 시즌 — CP cap 에 맞는 IV (1500 컵 → 슈퍼 IV).
+    <b>과거 시즌 (archive)</b> 는 다시 열릴 수 있어 데이터 유지. 가족당 1마리는 보관 권장.
+  </div>`;
+  const renderBlock = (key) => {
     const lg = DATA.leagues[key];
     const cap = parseInt(key.split('_').pop()) || 1500;
     const entries = lg.entries.filter(e => {
       const sp = DATA.species[e.sid];
       return sp && speciesPasses(sp);
     });
-    if (!entries.length) continue;
-    total += entries.length;
-    html += `<div class="section-h">${lg.ko} <span class="en">(${lg.en}, CP ${cap})</span></div>`;
-    html += `<table><thead><tr>
+    if (!entries.length) return '';
+    const archiveTag = lg.is_archive ? ` <span class="ovl ovl-cup">과거 시즌</span>` : '';
+    let h = `<div class="section-h">${lg.ko} <span class="en">(${lg.en}, CP ${cap})</span>${archiveTag}</div>`;
+    h += `<table><thead><tr>
       <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th>
       <th>슈퍼 IV</th><th>하이퍼 IV</th><th>추천 기술</th><th>비고</th>
     </tr></thead><tbody>`;
     for (const e of entries) {
       const sp = DATA.species[e.sid];
-      html += `<tr>
+      h += `<tr>
         <td class="rank">${e.rank}</td>
         <td class="num">${String(sp.dex).padStart(3,'0')}</td>
         <td>${nameKo(sp)}<br><span class="en">${sp.en}</span></td>
@@ -1730,10 +1749,21 @@ function renderCups() {
         <td>${extraInfoBadges(sp, 'Cup')}</td>
       </tr>`;
     }
-    html += `</tbody></table>`;
+    h += `</tbody></table>`;
+    return h;
+  };
+
+  let total = 0;
+  if (activeCups.length) {
+    html += `<h2 style="font-size:15px;margin:14px 0 6px">현재 시즌 컵 (${activeCups.length})</h2>`;
+    for (const k of activeCups) { html += renderBlock(k); total++; }
+  }
+  if (archiveCups.length) {
+    html += `<h2 style="font-size:15px;margin:20px 0 6px;color:var(--muted)">과거 시즌 컵 — archive (${archiveCups.length}, 다시 열릴 수 있음)</h2>`;
+    for (const k of archiveCups) { html += renderBlock(k); total++; }
   }
   if (!total) return `<div class="empty">결과 없음</div>`;
-  return `<div class="stat">${cupKeys.length} 컵</div>` + html;
+  return html;
 }
 
 function render() {
