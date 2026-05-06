@@ -858,6 +858,21 @@ def collect_all(species, moves, trans):
             "field_count": len(field_candidates),
         }
 
+    # 박스 매칭용 — gamemaster 의 unranked 종 (분류 안 된 종) 슬림 정보
+    unranked: dict[str, dict] = {}
+    for p in gm["pokemon"]:
+        sid = p["speciesId"]
+        if sid in species_out:
+            continue
+        if not p.get("released", True):
+            continue
+        cko = species_ko_name(p["dex"], prettify_name(p["speciesName"]), trans)
+        unranked[sid] = {
+            "id": sid, "dex": p["dex"], "ko": cko,
+            "en": prettify_name(p["speciesName"]),
+            "types": [t for t in p.get("types", []) if t and t != "none"],
+        }
+
     # CPM 테이블 — Pokemon GO 공식 값. Lv 1.0 → 50.0 (0.5 간격)
     # 인덱스: (lv - 1) * 2 → 0 = Lv1, 98 = Lv50
     cpm_table = [
@@ -894,6 +909,7 @@ def collect_all(species, moves, trans):
         "transfer_groups": transfer_groups,
         "mega_keep_groups": mega_keep_groups,
         "mega_possible_groups": mega_possible_groups,
+        "unranked": unranked,
     }
 
 
@@ -2003,27 +2019,35 @@ function renderFieldTopGlance() {
 const NAME_INDEX = (() => {
   const idx = {};
   const add = (key, sid) => {
-    const k = key.toLowerCase().trim();
+    if (!key) return;
+    const k = String(key).toLowerCase().trim();
     if (k && !idx[k]) idx[k] = sid;
+    // 괄호 제거
+    const base = k.replace(/\s*\([^)]*\)/g, '').trim();
+    if (base && !idx[base]) idx[base] = sid;
+    // 괄호 → 공백 (form 텍스트 유지: "깝질무 (동쪽바다)" → "깝질무 동쪽바다")
+    const np = k.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (np && !idx[np]) idx[np] = sid;
   };
+  // 1) species_out 모든 종
   for (const sp of Object.values(DATA.species)) {
     add(sp.ko, sp.id);
     add(sp.en, sp.id);
     add(sp.id, sp.id);
-    // 폼 괄호 제거 버전 (베이스 매칭용)
-    const koBase = sp.ko.replace(/\s*\([^)]*\)/g, '').trim();
-    const enBase = sp.en.replace(/\s*\([^)]*\)/g, '').trim();
-    add(koBase, sp.id);
-    add(enBase, sp.id);
-    // 진화 사슬 멤버 — 중간 단계 이름으로도 매칭
-    for (const k of (sp.chain_ko || [])) {
-      const kBase = k.replace(/\s*\([^)]*\)/g, '').trim();
-      add(kBase, sp.id);
+    for (const k of (sp.chain_ko || [])) add(k, sp.id);
+    for (const e of (sp.chain_en || [])) add(e, sp.id);
+  }
+  // 2) 가족 그룹 멤버
+  for (const groupKey of ['transfer_groups', 'mega_keep_groups', 'mega_possible_groups']) {
+    for (const g of (DATA[groupKey] || [])) {
+      for (const m of (g.members || [])) {
+        add(m.ko, m.sid); add(m.en, m.sid); add(m.sid, m.sid);
+      }
     }
-    for (const e of (sp.chain_en || [])) {
-      const eBase = e.replace(/\s*\([^)]*\)/g, '').trim();
-      add(eBase, sp.id);
-    }
+  }
+  // 3) unranked (gamemaster 폴백)
+  for (const u of Object.values(DATA.unranked || {})) {
+    add(u.ko, u.id); add(u.en, u.id); add(u.id, u.id);
   }
   return idx;
 })();
@@ -2036,23 +2060,85 @@ const FORM_SUFFIX = {
   '메가 y': '_mega_y', '알로라': '_alolan', '가라르': '_galarian',
 };
 
+// 한글 폼 키워드 → suffix
+const KO_FORM_KEYWORDS = {
+  '동쪽바다': '_east_sea', '서쪽바다': '_west_sea',
+  '알로라': '_alolan', '갈라르': '_galarian',
+  '히스이': '_hisuian', '팔데아': '_paldean',
+  '오리진': '_origin', '어나더': '_altered',
+  '영물': '_therian', '화신': '_incarnate',
+  '원시': '_primal',
+  '메가 x': '_mega_x', '메가 y': '_mega_y', '메가': '_mega',
+  '쉐도우': '_shadow',
+  '초목도롱': '_plant', '모래도롱': '_sandy', '쓰레기도롱': '_trash',
+  '여름의': '_summer', '가을의': '_autumn', '겨울의': '_winter', '봄의': '_spring',
+};
+
+// Calcy IV 가 이름에 붙이는 마크 제거 (성별·사이즈 등)
+function stripCalcyDecorations(name) {
+  if (!name) return '';
+  let n = name;
+  n = n.replace(/\s*[♀♂]\s*/g, ' ');
+  n = n.replace(/\s+(XXL|XXS|XL|XS|M|S|L)\s*$/i, '');
+  n = n.replace(/[★☆"']/g, '');
+  return n.replace(/\s+/g, ' ').trim();
+}
+
 function matchSpecies(name, form, isShadow) {
   if (!name) return null;
+  name = stripCalcyDecorations(name);
   const cleanName = name.replace(/\s*\([^)]*\)/g, '').trim();
-  // 1: name 자체로
-  let baseId = NAME_INDEX[name.toLowerCase().trim()] || NAME_INDEX[cleanName.toLowerCase()];
+  // 1: 그대로 / 괄호 제거 버전 매칭
+  let baseId = NAME_INDEX[name.toLowerCase().trim()]
+            || NAME_INDEX[cleanName.toLowerCase()];
+
+  // 2: 한글 폼 키워드 추출 (이름에 폼이 합쳐서 들어온 경우)
+  if (!baseId) {
+    const keys = Object.keys(KO_FORM_KEYWORDS).sort((a, b) => b.length - a.length);
+    for (const kw of keys) {
+      if (name.toLowerCase().includes(kw)) {
+        const pure = name.toLowerCase().replace(kw, '').replace(/\s+/g, ' ').trim();
+        const bid = NAME_INDEX[pure];
+        if (bid) {
+          const base = bid.replace(/_(mega(_[xyz])?|primal|shadow|alolan|galarian|hisuian|paldean|origin|altered|therian|incarnate|east_sea|west_sea|plant|sandy|trash|summer|autumn|winter|spring)$/, '');
+          const variant = base + KO_FORM_KEYWORDS[kw];
+          if (DATA.species[variant] || (DATA.unranked && DATA.unranked[variant])) return variant;
+          return bid;
+        }
+      }
+    }
+  }
   if (!baseId) return null;
-  // 2: form 적용
+
+  // 3: form 컬럼 적용
   const formKey = (form || '').toLowerCase().trim();
   let suffix = FORM_SUFFIX[formKey] || '';
   if (isShadow && !suffix) suffix = '_shadow';
   if (suffix) {
-    // 베이스에서 기존 suffix 떼고 새 suffix 적용
     const base = baseId.replace(/_(mega(_[xyz])?|primal|shadow|alolan|galarian|hisuian|paldean|origin|altered|therian|incarnate)$/, '');
     const variant = base + suffix;
     if (DATA.species[variant]) return variant;
   }
   return baseId;
+}
+
+// 종 정보 lookup — species_out 우선, 없으면 transfer/mega/unranked
+function lookupSpecies(sid) {
+  if (DATA.species[sid]) return { sp: DATA.species[sid], category: 'species' };
+  for (const g of (DATA.transfer_groups || [])) {
+    const m = g.members.find(x => x.sid === sid);
+    if (m) return { sp: m, category: 'transfer', group: g };
+  }
+  for (const g of (DATA.mega_keep_groups || [])) {
+    const m = g.members.find(x => x.sid === sid);
+    if (m) return { sp: m, category: 'mega_keep', group: g };
+  }
+  for (const g of (DATA.mega_possible_groups || [])) {
+    const m = g.members.find(x => x.sid === sid);
+    if (m) return { sp: m, category: 'mega_possible', group: g };
+  }
+  if (DATA.unranked && DATA.unranked[sid]) return { sp: DATA.unranked[sid], category: 'unranked' };
+  return null;
 }
 
 function maxLevelForCP(sp, ivA, ivD, ivS, cpCap) {
@@ -2315,15 +2401,48 @@ function runCalcy() {
     const isShadow = /^(yes|true|1|y|쉐도우)$/i.test(isShadowCol);
     const sid = matchSpecies(name, form, isShadow);
     if (!sid) { unmatched++; continue; }
-    const sp = DATA.species[sid];
-    if (!sp) { unmatched++; continue; }
+    const lookup = lookupSpecies(sid);
+    if (!lookup) { unmatched++; continue; }
     const ivA = parseInt(r[cols.atk]);
     const ivD = parseInt(r[cols.def]);
     const ivS = parseInt(r[cols.sta]);
     const lv = parseFloat(r[cols.level]) || 30;
     const lucky = cols.lucky >= 0 && /^(yes|true|1|y|럭키)$/i.test(r[cols.lucky]);
     if (isNaN(ivA) || isNaN(ivD) || isNaN(ivS)) continue;
-    const result = analyzeOne(sp, ivA, ivD, ivS, lv, lucky);
+
+    let result;
+    if (lookup.category === 'species') {
+      result = analyzeOne(lookup.sp, ivA, ivD, ivS, lv, lucky);
+    } else {
+      // species_out 외 종 — 가족 분류로 직접 판단
+      const m = lookup.sp;
+      let pri = 4, text = '⚪ 박사 송출 OK', why = '';
+      const isHundo = ivA === 15 && ivD === 15 && ivS === 15;
+      if (lookup.category === 'mega_keep') {
+        pri = isHundo ? 1 : 2;
+        text = isHundo ? '🔴 메가 변신 베이스 — 100% 보관' : '🟡 메가 보관 — 100% 우선';
+        why = '메가가 ranked';
+      } else if (lookup.category === 'mega_possible') {
+        pri = 2;
+        text = '🟡 메가 가능 — 100% 1마리 보관';
+        why = '추후 메가 풀 추가 대비';
+      } else if (lookup.category === 'transfer') {
+        const isKeep = lookup.group && m.sid === lookup.group.keep_sid;
+        if (m.is_shadow) { pri = 4; text = '⚪ 박사 송출 OK (쉐도우)'; }
+        else if (isKeep) { pri = 3; text = '🔵 가족 대표 — 1마리 보관'; why = '메타 변동 대비'; }
+        else { pri = 4; text = '⚪ 박사 송출 OK'; why = '가족 송출 후보'; }
+      } else {
+        pri = 4; text = '⚪ 박사 송출 OK (분류 없음)'; why = '';
+      }
+      result = {
+        sid, ko: m.ko, en: m.en || '', dex: m.dex || 9999,
+        types: m.types || [],
+        iv: {a: ivA, d: ivD, s: ivS}, level: lv, isLucky: lucky,
+        sp_now: 0, sp_pct: 0,
+        decisions: [{pri, text, why}],
+        pri,
+      };
+    }
     if (result) out.push(result);
   }
   _calcyResults = out;
