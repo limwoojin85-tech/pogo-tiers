@@ -2211,13 +2211,21 @@ function analyzeOne(sp, ivA, ivD, ivS, level, isLucky) {
   const isHundo = ivA === 15 && ivD === 15 && ivS === 15;
   const ivSum = ivA + ivD + ivS;
 
-  // 백개체 — 항상 최상위 라벨. ML/레이드 종 여부와 무관 (메가/마스터/컬렉션 가치)
+  // 백개체 — 메타 역할이 있을 때만 상위, 없으면 콜렉션 (보류)
   if (isHundo) {
-    const ctx = (ml && ml.rank <= 15) ? `ML#${ml.rank}` :
-                (raid && raid.rank <= 8 && raid.is_essential_tier) ? `vs ${raid.boss_ko}#${raid.rank}` :
-                (gl && gl.rank <= 20) ? `슈퍼리그 #${gl.rank} (캡 손해 있음)` :
-                '메가 변신 / 마스터리그 / 콜렉션';
-    decisions.push({pri:1, text:`🏆 백개체 (15/15/15) — ML / 레이드 종결`, why: ctx});
+    const hasMLRole = ml && ml.rank <= 30;
+    const hasRaidRole = raid && raid.rank <= 20;
+    const hasMegaRelevance = sp.mega_forms?.length;  // 메가 변신 가능
+    if (hasMLRole) {
+      decisions.push({pri:1, text:`🏆 백개체 — ML 종결`, why: `ML #${ml.rank}`});
+    } else if (hasRaidRole) {
+      decisions.push({pri:1, text:`🏆 백개체 — 레이드 종결`, why: `vs ${raid.boss_ko}#${raid.rank}`});
+    } else if (hasMegaRelevance) {
+      decisions.push({pri:2, text:`🏆 백개체 — 메가 변신용`, why: '메가 가능 — 100% 보관'});
+    } else {
+      // ML 30위 밖 + 레이드 20위 밖 + 메가 X = 콜렉션
+      decisions.push({pri:3, text:`🏆 백개체 (15/15/15) — 콜렉션`, why: 'ML/레이드/메가 메타 외 — 보관용'});
+    }
   }
 
   // 마스터/레이드 — ATK IV 가 핵심 (DEF/HP 는 부활 가능해서 영향 적음)
@@ -2561,11 +2569,12 @@ function dedupeCandidates(results) {
 // 박스 기준 팀 빌드 — 속성별·레이드별·리그별
 let _myTeams = null;
 function buildUserTeams(results) {
-  // 1) 속성별 레이드 어태커 Top 6 (내 박스에서)
+  // 1) 속성별 레이드 어태커 Top 6 (내 박스에서) — is_final 만 (진화 필요한 애들 제외)
   const byType = {};  // type → list of {result, atkScore, raidRank}
   for (const r of results) {
     const sp = DATA.species[r.sid];
     if (!sp || !sp.raid?.length) continue;
+    if (sp.is_final !== true) continue;  // 리자드/래비풋 등 미진화 제외 (리자몽으로 진화 후 사용)
     // ATK 가중치 점수
     const atkScore = r.iv.a * 2 + r.iv.d + r.iv.s;
     const bestRaid = [...sp.raid].sort((a,b) => a.rank - b.rank)[0];
@@ -2608,6 +2617,7 @@ function buildUserTeams(results) {
     for (const r of results) {
       const sp = DATA.species[r.sid];
       if (!sp) continue;
+      if (sp.is_final !== true) continue;  // 미진화 제외
       const myMatch = sp.raid?.find(rd => rd.boss_key === bossKey);
       if (!myMatch) continue;
       const atkScore = r.iv.a * 2 + r.iv.d + r.iv.s;
@@ -2632,6 +2642,7 @@ function buildUserTeams(results) {
   for (const r of results) {
     const sp = DATA.species[r.sid];
     if (!sp) continue;
+    if (sp.is_final !== true) continue;  // 미진화 제외 — 박스에선 진화 후 사용
     for (const [code, keys, cap] of [['GL', GL_KEYS, 1500], ['UL', UL_KEYS, 2500]]) {
       const best = bestRankIn(sp, keys);
       if (!best || best.rank > 30) continue;
@@ -2661,6 +2672,7 @@ function buildUserTeams(results) {
   for (const r of results) {
     const sp = DATA.species[r.sid];
     if (!sp) continue;
+    if (sp.is_final !== true) continue;  // 미진화 제외
     for (const p of (sp.pvp || [])) {
       if (GL_KEYS.has(p.league_key) || UL_KEYS.has(p.league_key)
        || ML_KEYS.has(p.league_key) || LC_KEYS.has(p.league_key)) continue;
@@ -2825,11 +2837,15 @@ function classifyBucket(r) {
 
   if (anyDec(/컵 못 씀/)) return 'transfer';
 
-  if (r.iv.a === 15 && r.iv.d === 15 && r.iv.s === 15) return 'cand_raid';
+  // 백개체 — 메타 역할 있을 때만 cand_raid, 없으면 hold (콜렉션)
+  if (r.iv.a === 15 && r.iv.d === 15 && r.iv.s === 15) {
+    if (anyDec(/백개체 — ML 종결|백개체 — 레이드 종결/)) return 'cand_raid';
+    return 'hold';  // 콜렉션 / 메가 변신용
+  }
   if (anyDec(/마스터\/레이드 풀강|레이드 최적/)) return 'cand_raid';
 
   // ─── 3순위: 보류 — 메가 / 가족 대표
-  if (anyDec(/메가 가능|메가 보관|가족 대표/)) return 'hold';
+  if (anyDec(/메가 가능|메가 보관|가족 대표|백개체 — 메가|백개체.*콜렉션/)) return 'hold';
 
   // ─── 4순위: 송출 (그 외 모두 — 슈퍼/하이퍼/컵 후보들도 베스트 6 화면 안에서만 표시됨)
   return 'transfer';
@@ -3070,7 +3086,8 @@ function renderTeamRaidType() {
   for (const t of TYPES) {
     const full = _myTeams.byTypeFull?.[t];
     if (!full || !full.team || !full.team.length) continue;
-    html += `<tr><td><b>${badge(t)} ${TYPES_KO[t]||t}</b></td>`;
+    // 베스트 6 줄
+    html += `<tr><td rowspan="3" style="vertical-align:top"><b>${badge(t)} ${TYPES_KO[t]||t}</b></td>`;
     for (let i = 0; i < 6; i++) {
       const m = full.team[i];
       if (!m) { html += '<td class="muted">—</td>'; continue; }
@@ -3078,34 +3095,28 @@ function renderTeamRaidType() {
         <small><span class="muted">${m.r.iv.a}/${m.r.iv.d}/${m.r.iv.s}</span>
         ${m.boss_ko ? `<br>vs ${m.boss_ko} #${m.raidRank}` : ''}</small></td>`;
     }
-    // 후보 (다음 10마리) — 속성별 매트릭스 한 줄에 압축 표시
+    html += '</tr>';
+    // 후보 줄 (한 줄, 칩 형식)
+    html += `<tr style="background:#fafafa"><td colspan="6"><small><b>↳ 후보:</b> `;
     if (full.candidates && full.candidates.length) {
-      html += `<tr style="background:#fafafa"><td><small class="muted">↳ 후보</small></td><td colspan="6"><small>`;
       html += full.candidates.slice(0, 10).map(m =>
         `<span class="ovl ovl-cup" style="margin:1px">${m.r.ko} <span class="muted">${m.r.iv.a}/${m.r.iv.d}/${m.r.iv.s}</span></span>`).join(' ');
-      html += `</small></td></tr>`;
+    } else {
+      html += `<span class="muted">—</span>`;
     }
+    html += `</small></td></tr>`;
+    // 보강 줄 (한 줄, 박스에 없는 메타)
+    const ri = _myTeams.reinforcement?.types?.[t];
+    html += `<tr style="background:#fff5e6"><td colspan="6"><small><b>↳ 보강:</b> `;
+    if (ri && ri.missing && ri.missing.length) {
+      html += ri.missing.slice(0, 6).map(m =>
+        `<span class="ovl ovl-cup">${m.sp.ko} <span class="muted">#${m.rank}</span></span>`).join(' ');
+    } else {
+      html += `<span style="color:var(--ok)">✅ 메타 다 보유</span>`;
+    }
+    html += `</small></td></tr>`;
   }
   html += '</tbody></table>';
-  // 속성별 보강 — 박스에 없는 메타 어태커
-  const ri = _myTeams.reinforcement?.types || {};
-  const allMissing = [];
-  for (const t of TYPES) {
-    const r = ri[t];
-    if (!r || !r.missing.length) continue;
-    allMissing.push({ type: t, missing: r.missing });
-  }
-  if (allMissing.length) {
-    html += `<div class="reinforce" style="background:#fff5e6;border:1px solid #f3c779;border-radius:6px;padding:8px;margin-top:8px">
-      <b>📋 속성별 보강 — 박스에 없는 메타 어태커</b>`;
-    for (const am of allMissing) {
-      html += `<div style="margin-top:4px">${badge(am.type)} <b>${TYPES_KO[am.type]||am.type}</b>: `;
-      html += am.missing.slice(0, 4).map(m =>
-        `<span class="ovl ovl-cup">${m.sp.ko} <span class="muted">#${m.rank}</span></span>`).join(' ');
-      html += `</div>`;
-    }
-    html += `</div>`;
-  }
   return html;
 }
 
