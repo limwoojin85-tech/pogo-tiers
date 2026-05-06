@@ -35,6 +35,26 @@ cd "C:\Users\limwo\새 폴더\pogo_tiers\scripts\calcy_adb"
 
 ## 실행
 
+### 권장 — `auto_scan_safe.ps1` (Dropout 감지 ON)
+
+```powershell
+.\auto_scan_safe.ps1                   # 기본 1500회, 1.5초 간격
+.\auto_scan_safe.ps1 -Count 800         # 박스 작으면 횟수 줄임
+.\auto_scan_safe.ps1 -DelayMs 2000      # Calcy 가 느리면 2초로
+```
+
+**Dropout 자동 감지**: history.csv 가 10초 동안 갱신 안 되면 (= Calcy 조사하기 꺼짐 의심) 비프 + 일시정지 → Calcy 다시 켜고 Enter → 재개. 헛스와이프 방지.
+
+### 옛 버전 (수동) — `auto_scan.ps1`
+
+```powershell
+.\auto_scan.ps1
+```
+
+dropout 감지 X. 1.3초 간격.
+
+### `run.ps1` (Renamer 자동 셋업 + 스캔)
+
 ```powershell
 .\run.ps1
 ```
