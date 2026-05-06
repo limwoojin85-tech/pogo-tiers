@@ -2204,13 +2204,21 @@ function analyzeOne(sp, ivA, ivD, ivS, level, isLucky) {
   const isHundo = ivA === 15 && ivD === 15 && ivS === 15;
   const ivSum = ivA + ivD + ivS;
 
+  // 백개체 — 항상 최상위 라벨. ML/레이드 종 여부와 무관 (메가/마스터/컬렉션 가치)
+  if (isHundo) {
+    const ctx = (ml && ml.rank <= 15) ? `ML#${ml.rank}` :
+                (raid && raid.rank <= 8 && raid.is_essential_tier) ? `vs ${raid.boss_ko}#${raid.rank}` :
+                (gl && gl.rank <= 20) ? `슈퍼리그 #${gl.rank} (캡 손해 있음)` :
+                '메가 변신 / 마스터리그 / 콜렉션';
+    decisions.push({pri:1, text:`🏆 백개체 (15/15/15) — ML / 레이드 종결`, why: ctx});
+  }
+
   // 마스터/레이드 — ATK IV 가 핵심 (DEF/HP 는 부활 가능해서 영향 적음)
-  if ((ml && ml.rank <= 15) || (raid && raid.is_essential_tier && raid.rank <= 8)) {
+  if (!isHundo && ((ml && ml.rank <= 15) || (raid && raid.is_essential_tier && raid.rank <= 8))) {
     const isML = ml && ml.rank <= 15;
     const ctxBoss = raid ? `vs ${raid.boss_ko}#${raid.rank}` : '';
-    if (isHundo) {
-      decisions.push({pri:1, text:`🔴 마스터/레이드 풀강 (100%, ATK 15)`,
-                      why:`${isML?'ML#'+ml.rank:''}${ctxBoss?' / '+ctxBoss:''}`});
+    if (false) {
+      // hundo 위에서 처리됨 — 분기 살리기 위해 dummy
     } else if (ivA === 15 && ivSum >= 38) {
       // ATK 15 + 합 38+ — 레이드 최적 (ML 도 거의 풀강 가치)
       decisions.push({pri:1, text:`🔴 레이드 최적 (ATK 15, ${ivSum}/45)`,
@@ -2252,10 +2260,26 @@ function analyzeOne(sp, ivA, ivD, ivS, level, isLucky) {
     decisions.push({pri:2, text:`🟡 리틀컵 #${lc.rank} (${lcScore.pct.toFixed(1)}%)`, why:`Lv${lcScore.level} CP${lcScore.cp}`});
   }
 
-  // 컵 한정
+  // 컵 한정 — 1500 CP 컵이라 GL 종결 IV 가 컵에도 종결. glScore.pct 로 검증
   if (cups.length && !decisions.length) {
     const top = cups[0];
-    decisions.push({pri:3, text:`🔵 컵 한정 — ${top.league_ko}#${top.rank}`, why:'시즌 한정, 보관 권장'});
+    if (glScore && glScore.pct >= 99) {
+      decisions.push({pri:1, text:`🥇 컵 종결 — ${top.league_ko}#${top.rank} (${glScore.pct.toFixed(1)}%)`,
+                      why:`Lv${glScore.level} CP${glScore.cp} · 1500 캡 거의 완벽`});
+    } else if (glScore && glScore.pct >= 96) {
+      decisions.push({pri:2, text:`🟡 컵 한정 — ${top.league_ko}#${top.rank} (${glScore.pct.toFixed(1)}%)`,
+                      why:`Lv${glScore.level} CP${glScore.cp} · 컵 풀강 가능`});
+    } else if (glScore && glScore.pct >= 90) {
+      decisions.push({pri:3, text:`🔵 컵 후보 — ${top.league_ko}#${top.rank} (${glScore.pct.toFixed(1)}%)`,
+                      why:'IV 부족 — 더 좋은 거 잡으면 송출'});
+    } else if (glScore) {
+      // ATK 높아 1500 캡에 못 맞춤 — 컵에서 무용
+      decisions.push({pri:4, text:`📦 컵 못 씀 — ${top.league_ko}#${top.rank} (${glScore.pct.toFixed(1)}%)`,
+                      why:`IV ${ivA}/${ivD}/${ivS} — 공격 너무 높아 1500 캡 풀강 불가`});
+    } else {
+      // rank1_iv.GL 없음 (베이비/너무 약함) — 컵 의미 없음
+      decisions.push({pri:3, text:`🔵 컵 한정 — ${top.league_ko}#${top.rank}`, why:'시즌 한정, 보관 권장'});
+    }
   }
 
   // 가족이 박사송출 / 메가 보관 그룹인지
@@ -2486,9 +2510,10 @@ function runCalcy() {
   renderCalcyResults();
 }
 
-// 같은 종 여러 마리 — keep/mega 버킷에 든 종은 최고 1마리만 남기고 중복 송출
+// 같은 종 여러 마리 — keep 계열 버킷의 종은 (sid × bucket) 별 최고 1마리만 보관, 중복 송출
+// 새 bucket 분리 덕에 자동으로 역할별(GL/UL/Cup/ML)로 따로 keep 됨.
 function dedupeKeepBuckets(results) {
-  const KEEP_BUCKETS = new Set(['keep', 'mega', 'perfect', 'raid', 'pvp']);
+  const KEEP_BUCKETS = new Set(['keep', 'mega', 'hundo', 'gl_perfect', 'ul_perfect', 'cup_perfect', 'raid', 'pvp', 'cup']);
   const bySid = {};
   for (const r of results) {
     if (!KEEP_BUCKETS.has(r.bucket)) continue;
@@ -2629,41 +2654,50 @@ function bestRankInBox(sp, keys) {
   return best;
 }
 
-// 박스 정리 bucket 분류
+// 박스 정리 bucket 분류 — 모든 decision 의 텍스트 합쳐서 판단 (decisions[0] 만 보면 우선순위 충돌로 잘못 분류)
 function classifyBucket(r) {
-  const top = r.decisions[0];
-  const txt = top.text || '';
-  // 종결: 99%+ 매칭 또는 100% IV
-  if (txt.includes('거의 완벽') && /99\.\d|100/.test(txt)) return 'perfect';
-  if (txt.includes('100%') && txt.includes('마스터')) return 'perfect';
-  // 레이드용
-  if (txt.includes('마스터/레이드') || txt.includes('메가 변신 베이스')) return 'raid';
-  // PvP 강화 (슈퍼/하이퍼/리틀)
-  if (/슈퍼리그|하이퍼리그|리틀컵/.test(txt) && (top.pri === 1 || top.pri === 2)) return 'pvp';
-  // 메가 보관
-  if (txt.includes('메가 가능') || txt.includes('메가 보관')) return 'mega';
-  // 컵 한정
-  if (txt.includes('컵 한정')) return 'cup';
-  // 송출
-  if (txt.includes('송출 OK')) return 'transfer';
-  // 가족 대표 보관
-  if (txt.includes('가족 대표')) return 'keep';
-  // 그 외 - 고민
+  const allTxt = r.decisions.map(d => d.text || '').join(' ');
+  const isHundo = r.iv.a === 15 && r.iv.d === 15 && r.iv.s === 15;
+  const hasPri12 = r.decisions.some(d => d.pri === 1 || d.pri === 2);
+
+  // 컵 못 씀 (공격 너무 높음) → 송출
+  if (/컵 못 씀/.test(allTxt)) return 'transfer';
+
+  // ─── 종결 (최상위) — 같은 종 N 마리에서도 (sid × bucket) 별 최고 1마리만 keep, 나머지 송출
+  if (isHundo) return 'hundo';                                     // 백개체 = ML/레이드/마스터 종결
+  if (/슈퍼리그.*거의 완벽/.test(allTxt)) return 'gl_perfect';      // 슈퍼리그 종결 (99%+)
+  if (/하이퍼리그.*거의 완벽/.test(allTxt)) return 'ul_perfect';    // 하이퍼리그 종결 (99%+)
+  if (/컵 종결/.test(allTxt)) return 'cup_perfect';                // 1500 컵 종결
+
+  // ─── 강한 후보
+  if (/마스터\/레이드 풀강|레이드 최적|메가 변신 베이스/.test(allTxt)) return 'raid';
+  if (/슈퍼리그.*쓸만|하이퍼리그.*쓸만|리틀컵/.test(allTxt) && hasPri12) return 'pvp';
+  if (/메가 가능|메가 보관/.test(allTxt)) return 'mega';
+  if (/컵 한정/.test(allTxt)) return 'cup';
+
+  // ─── 약한 신호
+  if (/송출 OK|중복 송출/.test(allTxt)) return 'transfer';
+  if (/가족 대표/.test(allTxt)) return 'keep';
+  // 그 외 - 고민 (IV 부족·랭킹 외·컵 후보 90% 등)
   return 'doubt';
 }
 
 const BUCKET_INFO = {
-  myteam:  { label: '🎯 내 팀빌더', desc: '속성별·레이드별·리그별 내 박스 기준 베스트' },
-  perfect: { label: '🏆 종결', desc: '거의 완벽 IV — 더 잡을 필요 X' },
-  raid:    { label: '⚔️ 레이드용', desc: '마스터/레이드 풀강 후보' },
-  pvp:     { label: '🛡️ PvP용', desc: '슈퍼·하이퍼·리틀 풀강' },
-  mega:    { label: '🔮 메가 보관', desc: '메가 변신 대비' },
-  cup:     { label: '🔄 컵 한정', desc: '시즌 컵 전용' },
-  keep:    { label: '🤔 보관 (가족 1마리)', desc: '메타 변동 대비' },
-  doubt:   { label: '🤔 고민', desc: 'IV 부족·랭킹 외' },
-  transfer:{ label: '📦 박사 송출', desc: '바로 보내도 OK' },
+  myteam:     { label: '🎯 내 팀빌더', desc: '속성별·레이드별·리그별 내 박스 기준 베스트' },
+  hundo:      { label: '🏆 백개체 (15/15/15)', desc: 'ML / 레이드 / 마스터 풀강 종결' },
+  gl_perfect: { label: '⚔️ 슈퍼리그 종결', desc: '1500 캡 rank-1 IV (99%+) — 슈퍼·각종 컵 풀강 OK' },
+  ul_perfect: { label: '🛡️ 하이퍼리그 종결', desc: '2500 캡 rank-1 IV (99%+)' },
+  cup_perfect:{ label: '🥇 컵 종결',           desc: '1500 컵 rank-1 IV (99%+)' },
+  raid:       { label: '⚔️ 레이드용',          desc: 'ATK 15 + 강한 IV — 백개체 잡기 전 풀강' },
+  pvp:        { label: '🛡️ PvP용 (96%+)',     desc: '슈퍼·하이퍼·리틀 — 종결 미만 강한 IV' },
+  mega:       { label: '🔮 메가 보관',          desc: '메가 변신 대비' },
+  cup:        { label: '🔄 컵 한정 (96%+)',    desc: '시즌 컵 전용 강한 IV' },
+  keep:       { label: '🤔 보관 (가족 1마리)', desc: '메타 변동 대비' },
+  doubt:      { label: '🤔 고민',              desc: 'IV 부족·랭킹 외' },
+  transfer:   { label: '📦 박사 송출',          desc: '바로 보내도 OK' },
 };
-const BUCKET_ORDER = ['myteam', 'perfect', 'raid', 'pvp', 'mega', 'keep', 'cup', 'doubt', 'transfer'];
+const BUCKET_ORDER = ['myteam', 'hundo', 'gl_perfect', 'ul_perfect', 'cup_perfect',
+                      'raid', 'pvp', 'mega', 'keep', 'cup', 'doubt', 'transfer'];
 
 function exportFilteredCSV() {
   if (!_calcyResults) return;
