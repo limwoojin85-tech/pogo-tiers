@@ -17,3 +17,5 @@ scripts/calcy_adb/platform-tools/
 scripts/calcy_adb/PokemonGo-CalcyIV-Renamer/
 scripts/calcy_adb/_shots/
 scripts/calcy_adb/_pip.log
+scripts/calcy_adb/*.csv         # 개인 박스 데이터
+scripts/calcy_adb/history*.csv
