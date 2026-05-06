@@ -729,9 +729,40 @@ def collect_all(species, moves, trans):
     mega_keep_groups.sort(key=lambda g: g["keep_dex"])
     mega_possible_groups.sort(key=lambda g: g["keep_dex"])
 
-    # 등장한 종만 남김
-    species_out = {sid: s for sid, s in species_out.items()
-                   if s["pvp"] or s["raid"]}
+    # 등장한 종만 남김 — 단 쉐도우/메가 가 ranked 면 일반(베이스) 도 같이 남김
+    # (검색 시 일반 폼도 찾을 수 있게 + 어느 쪽이 더 강한지 비교 가능)
+    ranked_initial = {sid for sid, s in species_out.items() if s["pvp"] or s["raid"]}
+    keep_sids = set(ranked_initial)
+    stronger_form_of: dict[str, list[str]] = defaultdict(list)
+    for sid in ranked_initial:
+        # 쉐도우 → 일반
+        if sid.endswith("_shadow"):
+            base = sid[: -len("_shadow")]
+            if base in species_out and base not in ranked_initial:
+                keep_sids.add(base)
+                stronger_form_of[base].append(sid)
+        # 메가/원시 → 일반
+        base = re.sub(r"_(mega(_[xyz])?|primal)$", "", sid)
+        if base != sid and base in species_out and base not in ranked_initial:
+            keep_sids.add(base)
+            stronger_form_of[base].append(sid)
+    species_out = {sid: s for sid, s in species_out.items() if sid in keep_sids}
+    # 더 강한 폼 정보 부착 + 판단 메시지 갱신
+    for sid, stronger_sids in stronger_form_of.items():
+        if sid not in species_out:
+            continue
+        sp_data = species_out[sid]
+        sp_data["stronger_forms"] = stronger_sids
+        # 일반 폼이 랭킹 외이지만 더 강한 폼이 있으면 보내지 말라고 표시
+        if sp_data["invest"]["verdict_ko"] == "보내도 OK":
+            sp_data["invest"]["verdict_ko"] = "더 강한 폼 우선 — 베이스 보관"
+            sp_data["invest"]["keep_score"] = 35
+            sp_data["invest"]["stages"] = [{
+                "ko": "베이스 보관",
+                "en": "Keep base",
+                "priority": 2,
+                "reason": "쉐도우/메가 폼이 랭킹에 있어 베이스 1마리 필요",
+            }]
 
     # 속성별 집계 — 사용자가 진짜로 원하는 뷰
     types_out: dict[str, dict] = {}
@@ -1554,11 +1585,24 @@ function renderSpeciesDetailCard(sp) {
 
   // 획득처
   const acqStr = (sp.acquisition || []).map(a => `<span class="ovl ovl-cup">${a}</span>`).join(' ');
+  // 더 강한 폼 (쉐도우/메가) 안내
+  let strongerHint = '';
+  if (sp.stronger_forms && sp.stronger_forms.length) {
+    const formNames = sp.stronger_forms.map(s => {
+      const f = DATA.species[s];
+      return f ? f.ko : s;
+    }).join(', ');
+    strongerHint = `<div class="iv-note" style="background:#fff3d9;color:var(--pri2)">
+      ⚠️ <b>${formNames}</b> 가 랭킹에 등장 — 이 일반 폼은 직접 랭킹에 없음.
+      쉐도우는 공격 +20%, 메가는 변신 시 큰 폭 강해짐. <b>기본적으로 더 강한 폼 추천</b>.
+    </div>`;
+  }
 
   return `<div class="card" data-sid="${sp.id}">
     <h2><span class="dex">#${String(sp.dex).padStart(3,'0')}</span>
         ${nameKo(sp)} <span class="en">/ ${sp.en}</span> ${sp.types.map(badge).join(' ')}</h2>
     ${verdictHtml(sp.invest)}
+    ${strongerHint}
     <div class="row"><span class="lbl">획득처</span> ${acqStr || '<span class="muted">—</span>'}</div>
     <div class="row"><span class="lbl">베이스 스탯</span> 공 ${sp.base_stats.atk} · 방 ${sp.base_stats.def} · 체 ${sp.base_stats.hp}</div>
     <div class="row"><span class="lbl">만렙 CP</span> <b>${(sp.max_cp||0).toLocaleString()}</b> <small class="muted">(100% IV Lv50)</small> ${sp.is_final ? '' : '<span class="ovl ovl-cup">진화 가능 — 최종 진화 후 더 높음</span>'}</div>
