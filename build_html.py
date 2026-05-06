@@ -2478,6 +2478,8 @@ function runCalcy() {
   for (const r of out) r.bucket = classifyBucket(r);
   // 같은 종 여러 마리 — 최고 1마리만 keep, 나머지 송출
   dedupeKeepBuckets(out);
+  // 박스 기준 팀 추천
+  buildUserTeams(out);
   _calcyResults = out;
   document.getElementById('calcy-summary').textContent =
     `총 ${out.length}마리 분석 (매칭 실패 ${unmatched})`;
@@ -2528,6 +2530,105 @@ function dedupeKeepBuckets(results) {
   }
 }
 
+// 박스 기준 팀 빌드 — 속성별·레이드별·리그별
+let _myTeams = null;
+function buildUserTeams(results) {
+  // 1) 속성별 레이드 어태커 Top 6 (내 박스에서)
+  const byType = {};  // type → list of {result, atkScore, raidRank}
+  for (const r of results) {
+    const sp = DATA.species[r.sid];
+    if (!sp || !sp.raid?.length) continue;
+    // ATK 가중치 점수
+    const atkScore = r.iv.a * 2 + r.iv.d + r.iv.s;
+    const bestRaid = [...sp.raid].sort((a,b) => a.rank - b.rank)[0];
+    for (const t of sp.types) {
+      // T 약점 보스에서 raid rank 가장 좋은 것
+      let bestForT = null;
+      for (const rd of sp.raid) {
+        const boss = DATA.bosses[rd.boss_key];
+        if (!boss) continue;
+        if (!boss.boss_weak[t]) continue;
+        if (!bestForT || rd.rank < bestForT.rank) bestForT = rd;
+      }
+      const score = (bestForT ? bestForT.rank : 99) - atkScore * 0.5;
+      if (!byType[t]) byType[t] = [];
+      byType[t].push({ r, atkScore, raidRank: bestForT?.rank || bestRaid.rank,
+                       boss_ko: bestForT?.boss_ko, score });
+    }
+  }
+  for (const t of Object.keys(byType)) {
+    byType[t].sort((a, b) => a.score - b.score);
+    byType[t] = byType[t].slice(0, 6);
+  }
+
+  // 2) 현재 활성 레이드 보스별 추천 팀
+  const ESSENTIAL_TIERS = new Set(['T5','T5sh','Mega','MegaT5','UB','Elite']);
+  const bossTeams = {};  // boss_key → list
+  for (const [bossKey, b] of Object.entries(DATA.bosses)) {
+    if (!ESSENTIAL_TIERS.has(b.tier_en)) continue;  // 현재만
+    const candidates = [];
+    for (const r of results) {
+      const sp = DATA.species[r.sid];
+      if (!sp) continue;
+      const myMatch = sp.raid?.find(rd => rd.boss_key === bossKey);
+      if (!myMatch) continue;
+      const atkScore = r.iv.a * 2 + r.iv.d + r.iv.s;
+      candidates.push({ r, raidRank: myMatch.rank, atkScore,
+                        score: myMatch.rank - atkScore * 0.3 });
+    }
+    candidates.sort((a, b) => a.score - b.score);
+    if (candidates.length) bossTeams[bossKey] = { boss: b, team: candidates.slice(0, 6) };
+  }
+
+  // 3) 리그별 박스 Top 3 (슈퍼/하이퍼/마스터)
+  const leagueTeams = { GL: [], UL: [], ML: [] };
+  for (const r of results) {
+    const sp = DATA.species[r.sid];
+    if (!sp) continue;
+    for (const [code, keys] of [['GL', GL_KEYS], ['UL', UL_KEYS], ['ML', ML_KEYS]]) {
+      const best = bestRankIn(sp, keys);
+      if (!best || best.rank > 30) continue;
+      // SP 비율
+      const cap = code === 'GL' ? 1500 : code === 'UL' ? 2500 : 100000;
+      const r1 = sp.rank1_iv?.[code === 'ML' ? 'Master' : code];
+      let pct = 0;
+      if (code === 'ML') {
+        // ML 은 100% IV 가까울수록 좋음
+        const s = r.iv.a + r.iv.d + r.iv.s;
+        pct = s / 45 * 100;
+      } else if (r1) {
+        const score = leagueScore(sp, r1, r.iv.a, r.iv.d, r.iv.s, cap);
+        pct = score?.pct || 0;
+      } else {
+        pct = (r.iv.a + r.iv.d + r.iv.s) / 45 * 100;
+      }
+      leagueTeams[code].push({ r, leagueRank: best.rank, pct });
+    }
+  }
+  for (const k of Object.keys(leagueTeams)) {
+    leagueTeams[k].sort((a, b) => (a.leagueRank - b.leagueRank) || (b.pct - a.pct));
+    // 같은 종 중복 제거 — 종당 1마리
+    const seen = new Set();
+    leagueTeams[k] = leagueTeams[k].filter(x => {
+      if (seen.has(x.r.sid)) return false;
+      seen.add(x.r.sid);
+      return true;
+    }).slice(0, 6);
+  }
+
+  _myTeams = { byType, bossTeams, leagueTeams };
+}
+
+// 가용한 leagueScore (analyze 가 쓰던 거) — 클로저 외부에 있어야 함
+function bestRankInBox(sp, keys) {
+  let best = null;
+  for (const p of (sp.pvp || [])) {
+    if (!keys.has(p.league_key)) continue;
+    if (!best || p.rank < best.rank) best = p;
+  }
+  return best;
+}
+
 // 박스 정리 bucket 분류
 function classifyBucket(r) {
   const top = r.decisions[0];
@@ -2552,6 +2653,7 @@ function classifyBucket(r) {
 }
 
 const BUCKET_INFO = {
+  myteam:  { label: '🎯 내 팀빌더', desc: '속성별·레이드별·리그별 내 박스 기준 베스트' },
   perfect: { label: '🏆 종결', desc: '거의 완벽 IV — 더 잡을 필요 X' },
   raid:    { label: '⚔️ 레이드용', desc: '마스터/레이드 풀강 후보' },
   pvp:     { label: '🛡️ PvP용', desc: '슈퍼·하이퍼·리틀 풀강' },
@@ -2561,7 +2663,7 @@ const BUCKET_INFO = {
   doubt:   { label: '🤔 고민', desc: 'IV 부족·랭킹 외' },
   transfer:{ label: '📦 박사 송출', desc: '바로 보내도 OK' },
 };
-const BUCKET_ORDER = ['perfect', 'raid', 'pvp', 'mega', 'keep', 'cup', 'doubt', 'transfer'];
+const BUCKET_ORDER = ['myteam', 'perfect', 'raid', 'pvp', 'mega', 'keep', 'cup', 'doubt', 'transfer'];
 
 function exportFilteredCSV() {
   if (!_calcyResults) return;
@@ -2594,17 +2696,31 @@ function renderCalcyResults() {
   if (!_calcyResults) return;
   const counts = {};
   for (const r of _calcyResults) counts[r.bucket] = (counts[r.bucket] || 0) + 1;
-  // bucket 버튼들
+  // myteam 은 따로 카운트 (레이드 보스 + 리그 + 속성)
+  let myteamCount = 0;
+  if (_myTeams) {
+    myteamCount = Object.keys(_myTeams.bossTeams).length
+                + Object.values(_myTeams.leagueTeams).filter(l => l.length > 0).length
+                + Object.keys(_myTeams.byType).length;
+  }
   let bh = '<div class="bucket-bar">';
   bh += `<button class="bucket-btn ${_calcyBucket === 'all' ? 'on' : ''}" data-bucket="all">전부 ${_calcyResults.length}</button>`;
   for (const b of BUCKET_ORDER) {
-    if (!counts[b]) continue;
+    let n = counts[b];
+    if (b === 'myteam') n = myteamCount;
+    if (!n) continue;
     const cls = _calcyBucket === b ? 'on' : '';
-    bh += `<button class="bucket-btn ${cls}" data-bucket="${b}">${BUCKET_INFO[b].label} ${counts[b]}</button>`;
+    bh += `<button class="bucket-btn ${cls}" data-bucket="${b}">${BUCKET_INFO[b].label} ${n}</button>`;
   }
   bh += `<button id="calcy-export" class="bucket-btn export-btn" title="현재 보기 CSV 저장">⬇ CSV 저장</button>`;
   bh += '</div>';
   document.getElementById('calcy-buckets').innerHTML = bh;
+
+  // myteam 모드면 별도 렌더
+  if (_calcyBucket === 'myteam') {
+    document.getElementById('calcy-result').innerHTML = renderMyTeams();
+    return;
+  }
 
   let list = _calcyBucket === 'all' ? _calcyResults
            : _calcyResults.filter(r => r.bucket === _calcyBucket);
@@ -2653,6 +2769,86 @@ function renderCalcyResults() {
   html += `</tbody></table>`;
   if (list.length > 800) html += `<div class="muted">+ ${list.length - 800} 더 있음</div>`;
   document.getElementById('calcy-result').innerHTML = html;
+}
+
+// 🎯 내 박스 팀빌더 렌더
+function renderMyTeams() {
+  if (!_myTeams) return '<div class="empty">팀 데이터 없음 — 분석 다시 실행</div>';
+  const tt = _myTeams;
+
+  let html = `<div class="iv-note" style="background:#e0eaff;color:var(--pri3)">
+    <b>🎯 내 박스 기준 베스트 팀</b> — 풀강 가정 시 어떤 6마리 팀 / PvP 픽이 되는지.
+    원 박스에서 IV·랭크 기준으로 자동 선발.
+  </div>`;
+
+  // 1) 현재 레이드 보스별 추천 팀
+  if (Object.keys(tt.bossTeams).length) {
+    html += `<div class="section-h">⚔️ 현재 레이드 — 보스별 내 박스 추천 6마리</div>`;
+    for (const bt of Object.values(tt.bossTeams)) {
+      const b = bt.boss;
+      html += `<div class="boss-head">
+        <h3>${b.boss_ko} <span class="en">/ ${b.boss_en}</span></h3>
+        <span>${(b.boss_types||[]).map(badge).join(' ')}</span>
+        <span class="weak">약점: ${multBadges(b.boss_weak||{})||'없음'}</span>
+        <span class="muted">[${b.tier_ko}]</span>
+      </div>`;
+      html += `<table><thead><tr><th>#</th><th>포켓몬</th><th>속성</th><th>IV</th><th>랭크</th></tr></thead><tbody>`;
+      bt.team.forEach((m, i) => {
+        const sp = DATA.species[m.r.sid];
+        html += `<tr>
+          <td class="rank">${i+1}</td>
+          <td>${sp ? nameKo(sp) : m.r.ko}<br><span class="en">${m.r.en}</span>${m.r.isLucky?' 🍀':''}</td>
+          <td>${(m.r.types||[]).map(badge).join(' ')}</td>
+          <td class="num"><b>${m.r.iv.a}/${m.r.iv.d}/${m.r.iv.s}</b></td>
+          <td class="num">#${m.raidRank}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+  }
+
+  // 2) 리그별 박스 Top 6
+  html += `<div class="section-h">🛡️ 메이저 리그 — 내 박스 Top 6 (종 중복 제거)</div>`;
+  const LEAGUE_LBL = {GL: '슈퍼리그 (CP1500)', UL: '하이퍼리그 (CP2500)', ML: '마스터리그'};
+  for (const code of ['GL', 'UL', 'ML']) {
+    const list = tt.leagueTeams[code];
+    if (!list || !list.length) continue;
+    html += `<h3 style="margin:10px 0 4px">${LEAGUE_LBL[code]}</h3>`;
+    html += `<table><thead><tr><th>#</th><th>포켓몬</th><th>속성</th><th>IV</th><th>리그 #</th><th>매칭 %</th></tr></thead><tbody>`;
+    list.forEach((m, i) => {
+      const sp = DATA.species[m.r.sid];
+      html += `<tr>
+        <td class="rank">${i+1}</td>
+        <td>${sp ? nameKo(sp) : m.r.ko}<br><span class="en">${m.r.en}</span>${m.r.isLucky?' 🍀':''}</td>
+        <td>${(m.r.types||[]).map(badge).join(' ')}</td>
+        <td class="num"><b>${m.r.iv.a}/${m.r.iv.d}/${m.r.iv.s}</b></td>
+        <td class="num">#${m.leagueRank}</td>
+        <td class="num">${m.pct.toFixed(1)}%</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+
+  // 3) 속성별 내 박스 Top 6
+  html += `<div class="section-h">🌈 속성별 — 내 박스 레이드 어태커 Top 6</div>`;
+  const TYPES = ['fire','water','grass','electric','ice','fighting','poison','ground',
+                 'flying','psychic','bug','rock','ghost','dragon','dark','steel','fairy','normal'];
+  html += `<table><thead><tr><th>속성</th><th>1위</th><th>2위</th><th>3위</th><th>4위</th><th>5위</th><th>6위</th></tr></thead><tbody>`;
+  for (const t of TYPES) {
+    const list = tt.byType[t];
+    if (!list || !list.length) continue;
+    html += `<tr><td><b>${badge(t)} ${TYPES_KO[t]||t}</b></td>`;
+    for (let i = 0; i < 6; i++) {
+      const m = list[i];
+      if (!m) { html += '<td class="muted">—</td>'; continue; }
+      html += `<td><b>${m.r.ko}</b><br>
+        <small><span class="muted">${m.r.iv.a}/${m.r.iv.d}/${m.r.iv.s}</span>
+        ${m.boss_ko ? `<br>vs ${m.boss_ko} #${m.raidRank}` : ''}</small></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  return html;
 }
 
 // ⭐ 필드 추천 — 18 속성 전부 한 화면에
