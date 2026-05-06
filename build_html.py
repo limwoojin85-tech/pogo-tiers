@@ -1124,6 +1124,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="tab" data-tab="cups">컵 시즌</div>
         <div class="tab" data-tab="transfer">박사 송출</div>
         <div class="tab" data-tab="calcy">📥 Calcy 분석</div>
+        <div class="tab" data-tab="xlcandy">🍬 XL사탕·20km</div>
         <div class="tab" data-tab="search">검색</div>
       </div>
     </div>
@@ -2579,7 +2580,12 @@ function buildUserTeams(results) {
   }
   for (const t of Object.keys(byType)) {
     byType[t].sort((a, b) => a.score - b.score);
-    byType[t] = byType[t].slice(0, 6);
+    // 종 중복 제거 — 종당 1마리만
+    const seen = new Set();
+    byType[t] = byType[t].filter(x => {
+      if (seen.has(x.r.sid)) return false;
+      seen.add(x.r.sid); return true;
+    }).slice(0, 6);
   }
 
   // 2) 현재 활성 레이드 보스별 추천 팀
@@ -2598,7 +2604,13 @@ function buildUserTeams(results) {
                         score: myMatch.rank - atkScore * 0.3 });
     }
     candidates.sort((a, b) => a.score - b.score);
-    if (candidates.length) bossTeams[bossKey] = { boss: b, team: candidates.slice(0, 6) };
+    // 종 중복 제거 — 종당 1마리만 (Top 6 다 다른 포켓몬)
+    const seen = new Set();
+    const uniq = candidates.filter(x => {
+      if (seen.has(x.r.sid)) return false;
+      seen.add(x.r.sid); return true;
+    });
+    if (uniq.length) bossTeams[bossKey] = { boss: b, team: uniq.slice(0, 6) };
   }
 
   // 3) 슈퍼리그 / 하이퍼리그 박스 Top 6 (컵 IV 검증 포함)
@@ -2657,7 +2669,87 @@ function buildUserTeams(results) {
     if (ct.list.length >= 3) cupTeams[k] = ct;  // 박스에서 3마리 이상 모이는 컵만
   }
 
-  _myTeams = { byType, bossTeams, leagueTeams, cupTeams };
+  // 5) 보강 추천 — 각 역할의 메타 Top 10 중 박스에 없는 종
+  // 메타 = DATA.species 전체에서 그 역할의 rank 가 가장 좋은 10종
+  function metaTopFor(predicate, getRank, n = 10) {
+    const all = Object.values(DATA.species).map(sp => {
+      const rk = getRank(sp);
+      return rk != null && predicate(sp) ? { sp, rank: rk } : null;
+    }).filter(Boolean).sort((a, b) => a.rank - b.rank);
+    return all.slice(0, n);
+  }
+  const ownedSids = new Set(results.map(r => r.sid));
+  const reinforcement = {};
+
+  // GL/UL 메타 Top 10
+  for (const [code, keys] of [['GL', GL_KEYS], ['UL', UL_KEYS]]) {
+    const top = metaTopFor(
+      sp => sp.pvp.some(p => keys.has(p.league_key)),
+      sp => {
+        const best = sp.pvp.find(p => keys.has(p.league_key));
+        return best?.rank;
+      },
+    );
+    reinforcement[`team_${code.toLowerCase()}`] = {
+      meta: top,
+      missing: top.filter(t => !ownedSids.has(t.sp.id)),
+      have: top.filter(t => ownedSids.has(t.sp.id)),
+    };
+  }
+
+  // 컵별 메타 Top 10
+  reinforcement.cups = {};
+  for (const cupKey of Object.keys(cupTeams)) {
+    const top = metaTopFor(
+      sp => sp.pvp.some(p => p.league_key === cupKey),
+      sp => sp.pvp.find(p => p.league_key === cupKey)?.rank,
+    );
+    reinforcement.cups[cupKey] = {
+      meta: top,
+      missing: top.filter(t => !ownedSids.has(t.sp.id)),
+    };
+  }
+
+  // 현재 레이드 보스별 — 카운터 Top 8 중 박스에 없는 종
+  reinforcement.bosses = {};
+  for (const bossKey of Object.keys(bossTeams)) {
+    const counterSpecies = Object.values(DATA.species)
+      .map(sp => {
+        const rd = (sp.raid || []).find(r => r.boss_key === bossKey);
+        return rd ? { sp, rank: rd.rank } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, 8);
+    reinforcement.bosses[bossKey] = {
+      meta: counterSpecies,
+      missing: counterSpecies.filter(t => !ownedSids.has(t.sp.id)),
+    };
+  }
+
+  // 속성별 — 박스에 없는 메타 어태커 Top 6 (DATA.types[t].field_top6 + 모든 raid 카운터 종합)
+  reinforcement.types = {};
+  const ALL_TYPES_LIST = ['fire','water','grass','electric','ice','fighting','poison','ground',
+                          'flying','psychic','bug','rock','ghost','dragon','dark','steel','fairy','normal'];
+  for (const t of ALL_TYPES_LIST) {
+    // 그 속성 어태커 = sp.types 가 t 포함, raid 데이터 있음
+    const typeAttackers = Object.values(DATA.species)
+      .map(sp => {
+        if (!sp.types?.includes(t)) return null;
+        if (!sp.raid?.length) return null;
+        const bestRaid = [...sp.raid].sort((a,b) => a.rank - b.rank)[0];
+        return { sp, rank: bestRaid.rank };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, 6);
+    reinforcement.types[t] = {
+      meta: typeAttackers,
+      missing: typeAttackers.filter(t => !ownedSids.has(t.sp.id)),
+    };
+  }
+
+  _myTeams = { byType, bossTeams, leagueTeams, cupTeams, reinforcement };
 }
 
 // 가용한 leagueScore (analyze 가 쓰던 거) — 클로저 외부에 있어야 함
@@ -2840,6 +2932,28 @@ function renderCalcyResults() {
   document.getElementById('calcy-result').innerHTML = html;
 }
 
+// ─── 보강 섹션 헬퍼 — 메타 Top N 중 박스에 없는 종
+function _reinforcementBox(meta, missing, role) {
+  if (!meta || !meta.length) return '';
+  const haveCount = meta.length - missing.length;
+  const pct = ((haveCount / meta.length) * 100).toFixed(0);
+  const stat = haveCount === meta.length
+    ? `<span style="color:var(--ok)">✅ 메타 Top ${meta.length} 다 보유 (${pct}%)</span>`
+    : `<span style="color:var(--warn)">⚠️ 메타 Top ${meta.length} 중 ${haveCount} 보유 (${pct}%) — ${missing.length}종 보강 추천</span>`;
+  let html = `<div class="reinforce" style="background:#fff5e6;border:1px solid #f3c779;border-radius:6px;padding:8px;margin:6px 0">
+    <b>📋 ${role} 메타 보강</b><br>${stat}`;
+  if (missing.length) {
+    html += `<div style="margin-top:6px"><b>잡으면 메타급:</b> `;
+    html += missing.map(m => {
+      const rkBadge = `<span class="muted">#${m.rank}</span>`;
+      return `<span class="ovl ovl-cup" style="margin:2px">${m.sp.ko} <span class="en">${m.sp.en}</span> ${rkBadge}</span>`;
+    }).join(' ');
+    html += `</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
 // ─── 팀 렌더 헬퍼 — 한 마리 row
 function _teamRow(m, i, extraCols) {
   const r = m.r;
@@ -2873,6 +2987,9 @@ function renderTeamRaidCurrent() {
       html += _teamRow(m, i, mm => `<td class="num">#${mm.raidRank}</td>`);
     });
     html += `</tbody></table>`;
+    // 보강 — 박스에 없는 카운터 메타
+    const ri = _myTeams.reinforcement?.bosses?.[Object.keys(_myTeams.bossTeams).find(k => _myTeams.bossTeams[k] === bt)];
+    if (ri) html += _reinforcementBox(ri.meta, ri.missing, `vs ${b.boss_ko}`);
   }
   return html;
 }
@@ -2898,6 +3015,25 @@ function renderTeamRaidType() {
     html += '</tr>';
   }
   html += '</tbody></table>';
+  // 속성별 보강 — 박스에 없는 메타 어태커
+  const ri = _myTeams.reinforcement?.types || {};
+  const allMissing = [];
+  for (const t of TYPES) {
+    const r = ri[t];
+    if (!r || !r.missing.length) continue;
+    allMissing.push({ type: t, missing: r.missing });
+  }
+  if (allMissing.length) {
+    html += `<div class="reinforce" style="background:#fff5e6;border:1px solid #f3c779;border-radius:6px;padding:8px;margin-top:8px">
+      <b>📋 속성별 보강 — 박스에 없는 메타 어태커</b>`;
+    for (const am of allMissing) {
+      html += `<div style="margin-top:4px">${badge(am.type)} <b>${TYPES_KO[am.type]||am.type}</b>: `;
+      html += am.missing.slice(0, 4).map(m =>
+        `<span class="ovl ovl-cup">${m.sp.ko} <span class="muted">#${m.rank}</span></span>`).join(' ');
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
   return html;
 }
 
@@ -2915,6 +3051,9 @@ function renderTeamLeague(code) {
     html += _teamRow(m, i, mm => `<td class="num">#${mm.leagueRank}</td><td class="num">${mm.pct.toFixed(1)}%</td>`);
   });
   html += `</tbody></table>`;
+  // 보강
+  const ri = _myTeams.reinforcement?.[code === 'GL' ? 'team_gl' : 'team_ul'];
+  if (ri) html += _reinforcementBox(ri.meta, ri.missing, lbl);
   return html;
 }
 
@@ -2934,6 +3073,9 @@ function renderTeamCups() {
       html += _teamRow(m, i, mm => `<td class="num">#${mm.cupRank}</td><td class="num">${mm.pct.toFixed(1)}%</td>`);
     });
     html += `</tbody></table>`;
+    // 컵별 보강
+    const ri = _myTeams.reinforcement?.cups?.[k];
+    if (ri) html += _reinforcementBox(ri.meta, ri.missing, ct.league_ko);
   }
   return html;
 }
@@ -3177,6 +3319,233 @@ function renderTransfer() {
   return html;
 }
 
+// ━━━━━━ 🍬 XL 사탕 + 20km 파트너 ━━━━━━
+// 20km 파트너 거리: 전설/환상/UB 대부분
+const TWENTY_KM_SIDS = new Set([
+  // 환상 (Mythical)
+  'mew','celebi','jirachi','deoxys','deoxys_attack','deoxys_defense','deoxys_speed',
+  'phione','manaphy','darkrai','shaymin','shaymin_sky','arceus',
+  'victini','keldeo','meloetta','meloetta_aria','meloetta_pirouette','genesect',
+  'diancie','hoopa','volcanion','magearna','marshadow','zeraora','meltan','melmetal','zarude',
+  // 전설 트리오 (Trio)
+  'articuno','zapdos','moltres','articuno_galarian','zapdos_galarian','moltres_galarian',
+  'raikou','entei','suicune',
+  'lugia','ho_oh',
+  'regirock','regice','registeel','regigigas','regieleki','regidrago',
+  'latias','latios',
+  'kyogre','kyogre_primal','groudon','groudon_primal','rayquaza','rayquaza_mega',
+  'uxie','mesprit','azelf',
+  'dialga','dialga_origin','palkia','palkia_origin','heatran','cresselia',
+  'giratina','giratina_origin','giratina_altered',
+  'cobalion','terrakion','virizion',
+  'tornadus','tornadus_therian','tornadus_incarnate',
+  'thundurus','thundurus_therian','thundurus_incarnate',
+  'landorus','landorus_therian','landorus_incarnate',
+  'reshiram','zekrom','kyurem','kyurem_white','kyurem_black',
+  'xerneas','yveltal','zygarde',
+  'type_null','silvally','cosmog','cosmoem','solgaleo','lunala',
+  'necrozma','necrozma_dawn_wings','necrozma_dusk_mane','necrozma_ultra',
+  'tapu_koko','tapu_lele','tapu_bulu','tapu_fini',
+  'nihilego','buzzwole','pheromosa','xurkitree','celesteela','kartana','guzzlord',
+  'poipole','naganadel','stakataka','blacephalon',
+  'zacian','zacian_hero','zacian_crowned_sword',
+  'zamazenta','zamazenta_hero','zamazenta_crowned_shield',
+  'eternatus','eternatus_eternamax',
+  'kubfu','urshifu','urshifu_single_strike','urshifu_rapid_strike',
+  'glastrier','spectrier','calyrex','calyrex_ice_rider','calyrex_shadow_rider',
+  'koraidon','miraidon','walking_wake','iron_leaves','ogerpon','fezandipiti',
+  'okidogi','munkidori','pecharunt','terapagos',
+]);
+
+let _xlAccounts = { '1': null, '2': null };
+
+function renderXLCandy() {
+  return `<div class="iv-note" style="background:#fff3cd;color:#664d03">
+    <b>🍬 XL 사탕 우선순위 + 20km 파트너 후보</b><br>
+    XL 사탕은 Lv40+ 강화에 필요. 박스에서 풀강 가치 가장 높은 종 + 20km 파트너로 걸어야 사탕 모이는 종 표시.<br>
+    각 계정 CSV 따로 업로드 — 두 계정 통합 비교.
+  </div>
+  <div class="card">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div>
+        <b>1번 계정</b><br>
+        <input type="file" id="xl-csv-1" accept=".csv,.txt,.tsv">
+        <div id="xl-status-1" class="muted" style="font-size:11px"></div>
+      </div>
+      <div>
+        <b>2번 계정</b><br>
+        <input type="file" id="xl-csv-2" accept=".csv,.txt,.tsv">
+        <div id="xl-status-2" class="muted" style="font-size:11px"></div>
+      </div>
+    </div>
+  </div>
+  <div id="xl-result"></div>`;
+}
+
+document.addEventListener('change', e => {
+  if (e.target.id === 'xl-csv-1' || e.target.id === 'xl-csv-2') {
+    const slot = e.target.id.endsWith('1') ? '1' : '2';
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      _xlAccounts[slot] = analyzeForXL(ev.target.result);
+      const stat = `${_xlAccounts[slot].results.length}마리 분석 (실패 ${_xlAccounts[slot].unmatched})`;
+      document.getElementById(`xl-status-${slot}`).textContent = stat;
+      renderXLResults();
+    };
+    reader.readAsText(f, 'utf-8');
+  }
+});
+
+// 한 CSV → 분석 결과
+function analyzeForXL(text) {
+  const {headers, rows} = parseCSV(text);
+  const cols = detectColumns(headers);
+  const results = [];
+  let unmatched = 0;
+  for (const r of rows) {
+    const name = r[cols.name];
+    if (!name) continue;
+    const form = cols.form >= 0 ? r[cols.form] : '';
+    const isShadow = cols.shadow >= 0 && /^(yes|true|1|y|쉐도우)$/i.test(r[cols.shadow]);
+    const sid = matchSpecies(name, form, isShadow);
+    if (!sid) { unmatched++; continue; }
+    const lookup = lookupSpecies(sid);
+    if (!lookup) { unmatched++; continue; }
+    const ivA = parseInt(r[cols.atk]), ivD = parseInt(r[cols.def]), ivS = parseInt(r[cols.sta]);
+    if (isNaN(ivA) || isNaN(ivD) || isNaN(ivS)) continue;
+    const lv = parseFloat(r[cols.level]) || 30;
+    const lucky = cols.lucky >= 0 && /^(yes|true|1|y|럭키)$/i.test(r[cols.lucky] || '');
+    const sp = lookup.sp;
+    const isHundo = ivA === 15 && ivD === 15 && ivS === 15;
+    const ml = bestRankIn(sp, ML_KEYS);
+    const raid = bestRaidRank(sp);
+    // XL 우선순위 계산 — 백개체 / ML 핵심 / 레이드 핵심 / ATK15 강자
+    let xlScore = 0;
+    let xlReason = [];
+    if (isHundo) { xlScore += 100; xlReason.push('백개체'); }
+    if (ivA === 15) { xlScore += 30; xlReason.push('ATK 15'); }
+    if (ml && ml.rank <= 5) { xlScore += 80 - ml.rank * 5; xlReason.push(`ML #${ml.rank}`); }
+    else if (ml && ml.rank <= 15) { xlScore += 40 - ml.rank * 2; xlReason.push(`ML #${ml.rank}`); }
+    if (raid && raid.rank <= 3) { xlScore += 50 - raid.rank * 5; xlReason.push(`vs ${raid.boss_ko}#${raid.rank}`); }
+    else if (raid && raid.rank <= 8) { xlScore += 25; xlReason.push(`레이드 #${raid.rank}`); }
+    if (lucky) { xlScore += 20; xlReason.push('🍀 Lucky'); }
+    const is20km = TWENTY_KM_SIDS.has(sid) || (sid && Object.values(DATA.species).find(s => s.id === sid)?.is_legendary);
+    results.push({
+      sid, ko: sp.ko, en: sp.en, dex: sp.dex || 9999, types: sp.types || [],
+      iv: {a: ivA, d: ivD, s: ivS}, level: lv, isLucky: lucky,
+      isHundo, xlScore, xlReason, is20km,
+      mlRank: ml?.rank, raidRank: raid?.rank, raidBossKo: raid?.boss_ko,
+    });
+  }
+  return { results, unmatched };
+}
+
+function renderXLResults() {
+  const accounts = ['1','2'].filter(a => _xlAccounts[a]);
+  if (!accounts.length) {
+    document.getElementById('xl-result').innerHTML = '';
+    return;
+  }
+  let html = '';
+  for (const acc of accounts) {
+    const data = _xlAccounts[acc];
+    const all = data.results;
+    // 1) Top XL 우선순위 (xlScore 내림차순)
+    const xlTop = [...all].filter(r => r.xlScore >= 30).sort((a,b) => b.xlScore - a.xlScore).slice(0, 30);
+    // 2) 20km 파트너 후보 (박스에 있는 20km 종 — IV 좋은 순)
+    const km20 = all.filter(r => r.is20km).sort((a,b) => b.xlScore - a.xlScore);
+
+    html += `<div class="section-h">📥 ${acc}번 계정 — ${all.length}마리 분석</div>`;
+
+    html += `<h3>🍬 XL 사탕 우선순위 Top ${Math.min(xlTop.length, 30)} <span class="muted" style="font-weight:normal">(백개체 / ML / 레이드 강자)</span></h3>`;
+    if (!xlTop.length) {
+      html += '<div class="empty">XL 가치 있는 강한 IV 가 박스에 없음</div>';
+    } else {
+      html += `<table><thead><tr>
+        <th>#</th><th>포켓몬</th><th>속성</th><th>IV</th><th>20km?</th><th>점수</th><th>이유</th>
+      </tr></thead><tbody>`;
+      xlTop.forEach((r, i) => {
+        const sp = DATA.species[r.sid];
+        const km = r.is20km ? '🚶‍♂️ <b>20km</b>' : '<span class="muted">—</span>';
+        html += `<tr ${r.is20km ? 'style="background:#fff3cd"' : ''}>
+          <td class="rank">${i+1}</td>
+          <td>${sp ? nameKo(sp) : r.ko}<br><span class="en">${r.en}</span>${r.isLucky?' 🍀':''}</td>
+          <td>${(r.types||[]).map(badge).join(' ')}</td>
+          <td class="num"><b>${r.iv.a}/${r.iv.d}/${r.iv.s}</b>${r.isHundo?' 🏆':''}</td>
+          <td>${km}</td>
+          <td class="num">${r.xlScore}</td>
+          <td><small>${r.xlReason.join(' · ')}</small></td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+
+    html += `<h3 style="margin-top:14px">🚶‍♂️ 20km 파트너 후보 — 박스에서 ${km20.length}마리 <span class="muted" style="font-weight:normal">(걸으면 XL 사탕 회수 가장 많은 거리)</span></h3>`;
+    if (!km20.length) {
+      html += '<div class="empty">박스에 20km 파트너 종 없음 — 전설/환상/UB 잡으면 추가됨</div>';
+    } else {
+      html += `<table><thead><tr>
+        <th>#</th><th>포켓몬</th><th>속성</th><th>IV</th><th>ML</th><th>레이드</th><th>XL 점수</th>
+      </tr></thead><tbody>`;
+      km20.slice(0, 60).forEach((r, i) => {
+        const sp = DATA.species[r.sid];
+        html += `<tr>
+          <td class="rank">${i+1}</td>
+          <td>${sp ? nameKo(sp) : r.ko}<br><span class="en">${r.en}</span>${r.isLucky?' 🍀':''}</td>
+          <td>${(r.types||[]).map(badge).join(' ')}</td>
+          <td class="num"><b>${r.iv.a}/${r.iv.d}/${r.iv.s}</b>${r.isHundo?' 🏆':''}</td>
+          <td class="num">${r.mlRank ? '#'+r.mlRank : '—'}</td>
+          <td class="num">${r.raidRank ? '#'+r.raidRank : '—'}</td>
+          <td class="num"><b>${r.xlScore}</b></td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+  }
+
+  // 두 계정 비교 — 같은 종 누가 더 좋은지
+  if (accounts.length === 2) {
+    const sidsByAcc = {};
+    for (const acc of accounts) {
+      sidsByAcc[acc] = {};
+      for (const r of _xlAccounts[acc].results) {
+        if (!sidsByAcc[acc][r.sid] || sidsByAcc[acc][r.sid].xlScore < r.xlScore) {
+          sidsByAcc[acc][r.sid] = r;
+        }
+      }
+    }
+    const both = Object.keys(sidsByAcc['1']).filter(s => sidsByAcc['2'][s]);
+    const compRows = both.map(sid => {
+      const r1 = sidsByAcc['1'][sid], r2 = sidsByAcc['2'][sid];
+      const winner = r1.xlScore > r2.xlScore ? '1번' : (r1.xlScore < r2.xlScore ? '2번' : '동점');
+      return { r1, r2, sid, winner, max: Math.max(r1.xlScore, r2.xlScore) };
+    }).filter(x => x.max >= 50).sort((a,b) => b.max - a.max);
+
+    if (compRows.length) {
+      html += `<div class="section-h">🔄 두 계정 같은 종 비교 — XL 어느 쪽에 쓰는 게 나은지</div>`;
+      html += `<table><thead><tr>
+        <th>포켓몬</th><th>1번 IV / 점수</th><th>2번 IV / 점수</th><th>추천 계정</th><th>20km?</th>
+      </tr></thead><tbody>`;
+      compRows.slice(0, 30).forEach(x => {
+        const sp = DATA.species[x.sid];
+        const km = x.r1.is20km ? '🚶 20km' : '';
+        html += `<tr>
+          <td>${sp ? nameKo(sp) : x.r1.ko}</td>
+          <td class="num">${x.r1.iv.a}/${x.r1.iv.d}/${x.r1.iv.s} <b>(${x.r1.xlScore})</b></td>
+          <td class="num">${x.r2.iv.a}/${x.r2.iv.d}/${x.r2.iv.s} <b>(${x.r2.xlScore})</b></td>
+          <td><b style="color:var(--ok)">${x.winner} 우선</b></td>
+          <td>${km}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+  }
+
+  document.getElementById('xl-result').innerHTML = html;
+}
+
 // 레이드 — 보스별 그룹 + 보스 약점 + 카운터 Top 8
 function renderRaidsView() {
   const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite',
@@ -3345,6 +3714,7 @@ function render() {
   else if (state.tab === 'cups') html = renderCups();
   else if (state.tab === 'transfer') html = renderTransfer();
   else if (state.tab === 'calcy') html = renderCalcy();
+  else if (state.tab === 'xlcandy') html = renderXLCandy();
   else if (state.tab === 'search') html = renderTriage();
   main.innerHTML = html;
   window.scrollTo(0, 0);
