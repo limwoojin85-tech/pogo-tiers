@@ -1014,10 +1014,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <h1>포켓몬고 박스 의사결정<span class="sub">살릴지 · 보낼지 · IV 등급 · 최종 업데이트 __BUILD_TIME__</span></h1>
       <div class="tabs">
         <div class="tab active" data-tab="types">속성별</div>
+        <div class="tab" data-tab="field">⭐ 필드 추천</div>
+        <div class="tab" data-tab="raids">레이드</div>
         <div class="tab" data-tab="gl">슈퍼리그</div>
         <div class="tab" data-tab="ul">하이퍼리그</div>
         <div class="tab" data-tab="ml">마스터리그</div>
-        <div class="tab" data-tab="raids">레이드</div>
         <div class="tab" data-tab="lc">리틀컵</div>
         <div class="tab" data-tab="cups">컵 시즌</div>
         <div class="tab" data-tab="transfer">박사 송출</div>
@@ -1859,6 +1860,51 @@ function evoBadge(kind, note) {
   return `<span class="ovl ${cls}" title="${note||''}">${label}${note ? ': ' + note : ''}</span>`;
 }
 
+// ⭐ 필드 추천 — 18 속성 전부 한 화면에
+function renderFieldAll() {
+  let html = `<div class="iv-note" style="background:#e8f5e9;color:#186118">
+    <b>전설 없이 잡을 수 있는 레이드 어태커</b> — 야생/알/리서치/로켓에서 얻을 수 있는 종.
+    100% IV Lv50 풀강 권장. 속성별 Top 6 + 매치업 + 추천 기술.
+  </div>`;
+  html += `<div class="stat">18 속성 전체 — 검색·속성 필터로 좁힐 수 있음</div>`;
+  for (const t of ALL_TYPES) {
+    const td = DATA.types[t];
+    if (!td || !td.field_top6.length) continue;
+    if (state.typeFilter && state.typeFilter !== t) continue;
+    // 검색 매치 — 어떤 필드 픽이라도 hit 하면 표시
+    if (state.q) {
+      const hay = td.field_top6.map(f =>
+        f.ko + ' ' + f.en + ' ' + (f.fast_ko||'') + ' ' + (f.fast_en||'') +
+        ' ' + (f.charged_ko||'') + ' ' + (f.charged_en||'')).join(' ').toLowerCase();
+      if (!hay.includes(state.q)) continue;
+    }
+    html += `<div class="section-h">${badge(t)} <b>${td.ko}</b> <span class="en">(${t}) — ${td.field_count}종 중 Top 6</span></div>`;
+    html += `<table><thead><tr>
+      <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th><th>획득처</th><th>최강 매치업</th><th>추천 기술</th>
+    </tr></thead><tbody>`;
+    td.field_top6.forEach((f, i) => {
+      const sp = DATA.species[f.sid];
+      const types = sp ? sp.types.map(badge).join(' ') : f.types.map(badge).join(' ');
+      const acq = sp ? (sp.acquisition || []).map(a => `<span class="ovl ovl-cup">${a}</span>`).join(' ') : '';
+      const matchup = f.best_boss_ko
+        ? `<b>vs ${f.best_boss_ko}</b><br><small class="muted">${f.best_boss_en} (${f.best_tier_ko}) #${f.rank_in_t || f.rank_any}</small>`
+        : '<span class="muted">—</span>';
+      const moves = moveSplitHtml(f.fast_ko, f.fast_en, f.charged_ko, f.charged_en);
+      html += `<tr>
+        <td class="rank">${i + 1}</td>
+        <td class="num">${String(f.dex).padStart(3,'0')}</td>
+        <td>${sp ? nameKo(sp) : '<b>'+f.ko+'</b>'}<br><span class="en">${f.en}</span></td>
+        <td>${types}</td>
+        <td>${acq}</td>
+        <td>${matchup}</td>
+        <td>${moves}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  return html;
+}
+
 // 박사 송출 — 두 섹션 (송출 가능 / 메가 보관)
 function renderTransfer() {
   const passes = (g) => {
@@ -2102,6 +2148,7 @@ function render() {
   const main = document.getElementById('main');
   let html = '';
   if (state.tab === 'types') html = renderTypes();
+  else if (state.tab === 'field') html = renderFieldAll();
   else if (state.tab === 'gl') html = renderLeagueTab('GL', '슈퍼리그 (Great League)', GL_KEYS, {cap:30});
   else if (state.tab === 'ul') html = renderLeagueTab('UL', '하이퍼리그 (Ultra League)', UL_KEYS, {cap:30});
   else if (state.tab === 'ml') html = renderLeagueTab('ML', '마스터리그 (Master League)', ML_KEYS, {cap:30});
