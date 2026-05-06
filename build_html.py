@@ -604,22 +604,36 @@ def collect_all(species, moves, trans):
     # 박사 송출 / 메가 보관 후보 분류
     ranked_sids = {sid for sid, s in species_out.items() if s["pvp"] or s["raid"]}
     family_of: dict[str, str] = {}
-    # 1차: pvpoke gamemaster 의 family.id
+    # 1차: pvpoke gamemaster 의 family.id (있는 것만)
     for p in gm["pokemon"]:
         fid = (p.get("family") or {}).get("id")
         if fid:
             family_of[p["speciesId"]] = fid
 
-    # 2차: family 가 None 인 mega/primal — 베이스 sid 의 family 로 백필
+    # 2차: evolutions propagate — 부모가 family 알고 있으면 자식도 같은 family
+    # (gastrodon 처럼 본인 family=None 인 경우 shellos.evolutions 로부터 백필)
+    changed = True
+    while changed:
+        changed = False
+        for p in gm["pokemon"]:
+            sid = p["speciesId"]
+            if sid not in family_of:
+                continue
+            for child in (p.get("family") or {}).get("evolutions") or []:
+                if child not in family_of:
+                    family_of[child] = family_of[sid]
+                    changed = True
+
+    # 3차: mega/primal/_shadow suffix 백필 — 베이스 sid 의 family 로
     for p in gm["pokemon"]:
         sid = p["speciesId"]
         if sid in family_of:
             continue
-        base = re.sub(r"_(mega(_[xyz])?|primal)$", "", sid)
+        base = re.sub(r"_(mega(_[xyz])?|primal|shadow)$", "", sid)
         if base != sid and base in family_of:
             family_of[sid] = family_of[base]
         else:
-            family_of[sid] = sid  # 여전히 모르면 자기 자신을 family
+            family_of[sid] = sid
 
     family_members: dict[str, list[str]] = defaultdict(list)
     for sid, fid in family_of.items():
@@ -633,7 +647,8 @@ def collect_all(species, moves, trans):
         return "_mega" in s or "_primal" in s
 
     transfer_groups = []
-    mega_keep_groups = []
+    mega_keep_groups = []          # 메가가 ranked — 무조건 베이스 보관
+    mega_possible_groups = []      # 메가 폼 존재하지만 ranked 는 아님 — 추후 대비 보관
 
     for fid, mids in family_members.items():
         ranked_in_family = [s for s in mids if s in ranked_sids]
@@ -663,14 +678,14 @@ def collect_all(species, moves, trans):
         keep_member = normal_members[-1] if normal_members else member_dicts[-1]
 
         if not ranked_in_family:
-            # 박사 송출 — 어디에도 안 쓰임. 단 보관 1마리 + 특수 진화 / 메가 가능 표시
+            # 어디에도 안 쓰임. 메가 폼 존재 여부로 분류.
             base_sid = keep_member["sid"]
             base_evo = SPECIAL_EVO.get(base_sid)
-            mega_avail = []
+            mega_avail_sids: list[str] = []
             for m in member_dicts:
                 if not m["is_mega"]:
-                    mega_avail.extend(has_mega_form(m["sid"]))
-            transfer_groups.append({
+                    mega_avail_sids.extend(has_mega_form(m["sid"]))
+            group_data = {
                 "family_id": fid,
                 "keep_sid": keep_member["sid"],
                 "keep_ko": keep_member["ko"],
@@ -679,8 +694,19 @@ def collect_all(species, moves, trans):
                 "members": [m for m in member_dicts if not m["is_mega"]],
                 "evo_kind": base_evo[0] if base_evo else None,
                 "evo_note": base_evo[1] if base_evo else None,
-                "has_mega_unranked": bool(mega_avail),  # 메가가 있으나 ranked 는 아님
-            })
+            }
+            if mega_avail_sids:
+                # 메가 폼 존재 — 박사송출 X, 보관 권장
+                mega_kos = [species_ko_name(
+                    pokemon_by_sid[ms]["dex"],
+                    prettify_name(pokemon_by_sid[ms]["speciesName"]),
+                    trans
+                ) for ms in mega_avail_sids if ms in pokemon_by_sid]
+                group_data["mega_avail_kos"] = mega_kos
+                group_data["mega_avail_sids"] = mega_avail_sids
+                mega_possible_groups.append(group_data)
+            else:
+                transfer_groups.append(group_data)
         elif ranked_mega and not ranked_normal:
             # 메가/원시만 쓰임 — 베이스 보관 필수 (메가 변신 재료)
             mega_member = next((m for m in member_dicts if m["is_mega"]), None)
@@ -701,6 +727,7 @@ def collect_all(species, moves, trans):
 
     transfer_groups.sort(key=lambda g: g["keep_dex"])
     mega_keep_groups.sort(key=lambda g: g["keep_dex"])
+    mega_possible_groups.sort(key=lambda g: g["keep_dex"])
 
     # 등장한 종만 남김
     species_out = {sid: s for sid, s in species_out.items()
@@ -835,6 +862,7 @@ def collect_all(species, moves, trans):
         "essentials_count": len(essential_ids),
         "transfer_groups": transfer_groups,
         "mega_keep_groups": mega_keep_groups,
+        "mega_possible_groups": mega_possible_groups,
     }
 
 
@@ -1985,6 +2013,7 @@ function renderTransfer() {
 
   const xfer = (DATA.transfer_groups || []).filter(passes);
   const megaKeep = (DATA.mega_keep_groups || []).filter(passes);
+  const megaPossible = (DATA.mega_possible_groups || []).filter(passes);
 
   let html = '';
 
@@ -2015,6 +2044,33 @@ function renderTransfer() {
     html += `</tbody></table>`;
   }
 
+  // ─── 섹션 1.5: 메가 가능 — 추후 대비 보관 ───
+  if (megaPossible.length) {
+    html += `<div class="iv-note" style="background:#fff3d9;color:var(--pri2)">
+      <b>메가 진화 가능 — 추후 대비 보관</b><br>
+      현재 메가도 핵심은 아니지만 <b>메가 폼이 존재</b>. Niantic 이 언제든 메가 풀에 추가할 수 있어 베이스 1마리 보관 권장.
+    </div>`;
+    html += `<div class="section-h">메가 진화 가능 (대비 보관) — ${megaPossible.length} 가족</div>`;
+    html += `<table><thead><tr>
+      <th>Dex</th><th>보관할 베이스</th><th>가능한 메가 폼</th><th>진화 메모</th>
+    </tr></thead><tbody>`;
+    for (const g of megaPossible) {
+      const keepMember = g.members.find(m => m.sid === g.keep_sid) || g.members[g.members.length - 1];
+      const megaList = (g.mega_avail_kos || []).map(k => `<span class="ovl ovl-raid">${k}</span>`).join(' ');
+      html += `<tr>
+        <td class="num">#${String(g.keep_dex).padStart(3,'0')}</td>
+        <td>
+          <b>${g.keep_ko}</b> <span class="en">/ ${g.keep_en}</span><br>
+          ${keepMember.types.map(badge).join(' ')}
+          <div class="muted" style="font-size:11px">100% IV 1마리 보관</div>
+        </td>
+        <td>${megaList || '<span class="muted">—</span>'}</td>
+        <td>${evoBadge(g.evo_kind, g.evo_note) || '<span class="muted">—</span>'}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
   // ─── 섹션 2: 박사 송출 가능 ───
   html += `<div class="iv-note">
     <b>박사 송출 가능</b> — 어떤 리그·컵·레이드·메가에도 안 쓰이는 가족.<br>
@@ -2030,7 +2086,6 @@ function renderTransfer() {
     const otherMembers = g.members.filter(m => m.sid !== g.keep_sid);
     const notes = [];
     if (g.evo_kind) notes.push(evoBadge(g.evo_kind, g.evo_note));
-    if (g.has_mega_unranked) notes.push(`<span class="ovl ovl-raid" title="메가 형태 존재 — 추후 핵심 가능성">메가 가능</span>`);
     html += `<tr>
       <td class="num">#${String(g.keep_dex).padStart(3,'0')}</td>
       <td>
