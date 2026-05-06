@@ -2217,17 +2217,37 @@ function findCol(headers, aliases) {
 }
 
 function detectColumns(headers) {
+  // 헤더 정규화 — Ø, Avg, 공백 통일
+  const norm = headers.map(h => h.toLowerCase()
+    .replace(/ø/g, 'avg ')
+    .replace(/^avg(?=\S)/, 'avg ')      // "avgatt" → "avg att"
+    .replace(/\s+/g, ' ').trim());
+  // findCol 재구현 — 정규화된 버전에서 검색
+  const find = (aliases) => {
+    for (const a of aliases) {
+      const i = norm.indexOf(a.toLowerCase());
+      if (i >= 0) return i;
+    }
+    for (let i = 0; i < norm.length; i++) {
+      for (const a of aliases) {
+        const al = a.toLowerCase();
+        if (norm[i] === al) return i;
+        if (norm[i].includes(al) && norm[i].length < al.length + 8) return i;
+      }
+    }
+    return -1;
+  };
   return {
-    name: findCol(headers, ['name', 'pokemon', 'species', '이름', '포켓몬', '몬스터']),
-    form: findCol(headers, ['form', '폼']),
-    cp: findCol(headers, ['cp']),
-    atk: findCol(headers, ['atk', 'attack', 'iv atk', '공격']),
-    def: findCol(headers, ['def', 'defense', 'defence', 'iv def', '방어']),
-    sta: findCol(headers, ['sta', 'stamina', 'iv sta', 'iv hp', '체력']),
-    level: findCol(headers, ['lvl', 'level', 'lv', '레벨']),
-    hp: findCol(headers, ['hp', 'health']),
-    shadow: findCol(headers, ['shadow', 'is shadow', '쉐도우']),
-    lucky: findCol(headers, ['lucky', 'is lucky', '럭키']),
+    name: find(['name', 'pokemon', 'species', '이름', '포켓몬', '몬스터']),
+    form: find(['form', '폼']),
+    cp: find(['cp']),
+    atk: find(['avg att iv', 'avg att', 'att iv', 'atk', 'attack', '공격']),
+    def: find(['avg def iv', 'avg def', 'def iv', 'def', 'defense', 'defence', '방어']),
+    sta: find(['avg hp iv', 'avg hp', 'hp iv', 'sta iv', 'sta', 'stamina', '체력']),
+    level: find(['lvl', 'level', 'lv', '레벨']),
+    hp: find(['hp', 'health']),
+    shadow: find(['shadowform', 'shadow', 'is shadow', '쉐도우']),
+    lucky: find(['lucky?', 'lucky', 'is lucky', '럭키']),
   };
 }
 
