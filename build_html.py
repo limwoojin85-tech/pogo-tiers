@@ -2730,20 +2730,24 @@ function buildUserTeams(results) {
     };
   }
 
-  // 현재 레이드 보스별 — 카운터 Top 8 중 박스에 없는 종
+  // 현재 레이드 보스별 — 메타 Top 8 + 필드 카운터 Top 8 (전설/환상/UB 제외)
   reinforcement.bosses = {};
   for (const bossKey of Object.keys(bossTeams)) {
-    const counterSpecies = Object.values(DATA.species)
+    const all = Object.values(DATA.species)
       .map(sp => {
         const rd = (sp.raid || []).find(r => r.boss_key === bossKey);
         return rd ? { sp, rank: rd.rank } : null;
       })
       .filter(Boolean)
-      .sort((a, b) => a.rank - b.rank)
-      .slice(0, 8);
+      .sort((a, b) => a.rank - b.rank);
+    const meta = all.slice(0, 8).map(x => ({...x, have: ownedSids.has(x.sp.id)}));
+    const fieldCounters = all.filter(x => x.sp.is_field === true).slice(0, 8)
+      .map(x => ({...x, have: ownedSids.has(x.sp.id)}));
     reinforcement.bosses[bossKey] = {
-      meta: counterSpecies,
-      missing: counterSpecies.filter(t => !ownedSids.has(t.sp.id)),
+      meta,
+      missing: meta.filter(t => !t.have),
+      fieldCounters,
+      fieldMissing: fieldCounters.filter(t => !t.have),
     };
   }
 
@@ -3024,10 +3028,35 @@ function renderTeamRaidCurrent() {
     html += `</tbody></table>`;
     // 후보 (다음 10마리)
     html += _candidatesTable(bt.candidates, mm => `<td class="num">#${mm.raidRank}</td>`, '<th>랭크</th>');
-    // 보강 — 박스에 없는 카운터 메타
-    const ri = _myTeams.reinforcement?.bosses?.[Object.keys(_myTeams.bossTeams).find(k => _myTeams.bossTeams[k] === bt)];
-    if (ri) html += _reinforcementBox(ri.meta, ri.missing, `vs ${b.boss_ko}`);
+    // 보강 — 박스에 없는 카운터 메타 + 필드 카운터 추천
+    const bossKey = Object.keys(_myTeams.bossTeams).find(k => _myTeams.bossTeams[k] === bt);
+    const ri = _myTeams.reinforcement?.bosses?.[bossKey];
+    if (ri) {
+      html += _reinforcementBox(ri.meta, ri.missing, `vs ${b.boss_ko} 메타 카운터 Top 8`);
+      // 필드 카운터 — 전설/환상/UB 없이 잡을 수 있는 카운터 Top 8
+      if (ri.fieldCounters && ri.fieldCounters.length) {
+        html += _fieldCountersBox(ri.fieldCounters, b.boss_ko);
+      }
+    }
   }
+  return html;
+}
+
+// 필드 카운터 박스 — 전설 X, 야생/리서치/알 등으로 잡을 수 있는 카운터
+function _fieldCountersBox(fieldCounters, bossKo) {
+  let html = `<div class="reinforce" style="background:#e8f5e9;border:1px solid #6dbd6d;border-radius:6px;padding:8px;margin:6px 0">
+    <b>🌿 vs ${bossKo} 필드 카운터 — 전설 없이 잡을 수 있는 어태커 Top ${fieldCounters.length}</b>`;
+  html += `<div style="margin-top:6px">`;
+  html += fieldCounters.map(m => {
+    const mark = m.have ? '✅' : '🟡';
+    const acq = (m.sp.acquisition || []).slice(0, 3).join(', ');
+    return `<span class="ovl ovl-cup" style="margin:2px;${m.have?'background:#d4edda':'background:#fff'}">
+      ${mark} ${m.sp.ko} <span class="muted">#${m.rank}${acq?' · '+acq:''}</span>
+    </span>`;
+  }).join(' ');
+  html += `</div>
+    <div style="margin-top:4px;font-size:11px;color:#666">✅ 박스 보유 / 🟡 잡으면 카운터로 활용 가능</div>
+  </div>`;
   return html;
 }
 
