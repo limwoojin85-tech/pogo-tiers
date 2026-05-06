@@ -407,12 +407,19 @@ def collect_all(species, moves, trans):
         gm_p = pokemon_by_sid.get(sid)
         base_stats = (gm_p or {}).get("baseStats") or {"atk": 0, "def": 0, "hp": 0}
 
-        # 100% IV Lv50 stat product (raid 비교 기준)
+        # 100% IV Lv50 stat product + CP (raid 비교 + 만렙 표시용)
+        # 공식: CP = max(10, floor(Atk × √Def × √HP / 10)), 각 스탯 = (Base+IV) × CPM (raw, no floor)
+        # Stat product 는 displayed HP 사용 (floor)
         cpm50 = 0.84029999
-        a_max = (base_stats.get("atk", 0) + 15) * cpm50
-        d_max = (base_stats.get("def", 0) + 15) * cpm50
-        h_max = int((base_stats.get("hp", 0) + 15) * cpm50)
-        max_sp = round(a_max * d_max * h_max)
+        a_raw = (base_stats.get("atk", 0) + 15) * cpm50
+        d_raw = (base_stats.get("def", 0) + 15) * cpm50
+        h_raw = (base_stats.get("hp", 0) + 15) * cpm50
+        max_sp = round(a_raw * d_raw * int(h_raw))
+        max_cp = max(10, int(a_raw * (d_raw ** 0.5) * (h_raw ** 0.5) / 10))
+
+        # 최종 진화형 여부 — pvpoke family.evolutions 비어있으면 최종
+        gm_fam = (gm_p or {}).get("family") or {}
+        is_final = not gm_fam.get("evolutions")
 
         species_out[sid] = {
             "id": sid,
@@ -423,7 +430,9 @@ def collect_all(species, moves, trans):
             "base_stats": {"atk": base_stats.get("atk", 0),
                            "def": base_stats.get("def", 0),
                            "hp": base_stats.get("hp", 0)},
-            "max_sp": max_sp,    # 100% IV Lv50
+            "max_sp": max_sp,    # 100% IV Lv50 stat product
+            "max_cp": max_cp,    # 100% IV Lv50 CP
+            "is_final": is_final,
             "weak": {t: round(m, 4) for t, m in weak.items()},
             "resist": {t: round(m, 4) for t, m in resist.items()},
             "chain_ko": chain_kos,
@@ -725,7 +734,7 @@ def collect_all(species, moves, trans):
         } for s in type_species[:30]]
 
         # 2.5 ★ 필드 추천 — 레이드에서 쓸 수 있는 비전설/비메가 (Top 6)
-        # T 속성 약점 보스 키 셋
+        # 최종 진화형만 (근육몬 X, 괴력몬 O)
         tweak_keys = {b["boss_key"] for b in weak_bosses}
         field_candidates = []
         for sp in species_out.values():
@@ -733,6 +742,8 @@ def collect_all(species, moves, trans):
                 continue
             if not sp.get("is_field"):
                 continue
+            if not sp.get("is_final"):
+                continue  # 최종 진화형만
             if not sp["raid"]:
                 continue  # 레이드 카운터 역할 있어야 함
             # T 약점 보스 vs 일반 보스 둘 다 가능. T-약점 매칭이 우선.
@@ -751,6 +762,7 @@ def collect_all(species, moves, trans):
             field_candidates.append({
                 "sid": sp["id"], "dex": sp["dex"], "ko": sp["ko"], "en": sp["en"],
                 "types": sp["types"],
+                "max_cp": sp["max_cp"],
                 "rank_in_t": best_t if best_t < 9999 else None,
                 "rank_any": best_any,
                 "best_boss_ko": best_entry["boss_ko"] if best_entry else "",
@@ -1184,12 +1196,13 @@ function renderTypeDetail(t) {
       전설은 모두가 못 잡으니 <b>야생/알/리서치/로켓에서 얻을 수 있는 종</b>만. 100% IV 우선, Lv 50 강화 권장.
     </div>`;
     html += `<table><thead><tr>
-      <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th><th>획득처</th><th>최강 매치업</th><th>추천 기술</th>
+      <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th><th>만렙 CP<br><small>(100% Lv50)</small></th><th>획득처</th><th>최강 매치업</th><th>추천 기술</th>
     </tr></thead><tbody>`;
     td.field_top6.forEach((f, i) => {
       const sp = DATA.species[f.sid];
       const types = sp ? sp.types.map(badge).join(' ') : f.types.map(badge).join(' ');
       const acq = sp ? (sp.acquisition || []).map(a => `<span class="ovl ovl-cup">${a}</span>`).join(' ') : '';
+      const cp = f.max_cp || sp?.max_cp || '—';
       const matchup = f.best_boss_ko
         ? `<b>vs ${f.best_boss_ko}</b><br><small class="muted">${f.best_boss_en} (${f.best_tier_ko}) #${f.rank_in_t || f.rank_any}</small>`
         : '<span class="muted">—</span>';
@@ -1199,6 +1212,7 @@ function renderTypeDetail(t) {
         <td class="num">${String(f.dex).padStart(3,'0')}</td>
         <td>${sp ? nameKo(sp) : '<b>'+f.ko+'</b>'}<br><span class="en">${f.en}</span></td>
         <td>${types}</td>
+        <td class="num"><b>${cp.toLocaleString ? cp.toLocaleString() : cp}</b></td>
         <td>${acq}</td>
         <td>${matchup}</td>
         <td>${moves}</td>
@@ -1408,7 +1422,7 @@ function statProductAt(sp, atk_iv, def_iv, sta_iv, level) {
   if (!cpm || !sp.base_stats) return 0;
   const a = (sp.base_stats.atk + atk_iv) * cpm;
   const d = (sp.base_stats.def + def_iv) * cpm;
-  const h = Math.floor((sp.base_stats.hp + sta_iv) * cpm);
+  const h = Math.floor((sp.base_stats.hp + sta_iv) * cpm); // displayed HP
   return Math.round(a * d * h);
 }
 
@@ -1440,6 +1454,7 @@ function comparisonBlock(sp) {
     return `<tr>
       <td>${badge(r.type)} 최강 필드</td>
       <td><b>${r.ref.ko}</b><br><span class="en">${r.ref.en}</span></td>
+      <td class="num">${(r.ref.max_cp||0).toLocaleString()}</td>
       <td class="num">${r.ref.max_sp.toLocaleString()}</td>
       <td class="num"><b class="${cls}">${pct}%</b></td>
     </tr>`;
@@ -1459,15 +1474,16 @@ function comparisonBlock(sp) {
       <span class="result" style="margin-left:auto;font-weight:600"></span>
     </div>
     <table style="margin-top:8px"><thead><tr>
-      <th>비교</th><th>대상</th><th>SP (100% Lv50)</th><th>이 종 대비</th>
+      <th>비교</th><th>대상</th><th>만렙 CP</th><th>SP (100% Lv50)</th><th>이 종 대비</th>
     </tr></thead><tbody>
       <tr style="background:#fffbe6">
         <td>이 포켓몬 (100%)</td>
         <td><b>${sp.ko}</b></td>
+        <td class="num">${(sp.max_cp||0).toLocaleString()}</td>
         <td class="num">${sp.max_sp.toLocaleString()}</td>
         <td class="num"><b>100%</b> (기준)</td>
       </tr>
-      ${refsHtml || '<tr><td colspan="4" class="muted">같은 속성 필드 비교 대상 없음</td></tr>'}
+      ${refsHtml || '<tr><td colspan="5" class="muted">같은 속성 필드 비교 대상 없음</td></tr>'}
     </tbody></table>
   </div>`;
 }
@@ -1516,6 +1532,7 @@ function renderSpeciesDetailCard(sp) {
     ${verdictHtml(sp.invest)}
     <div class="row"><span class="lbl">획득처</span> ${acqStr || '<span class="muted">—</span>'}</div>
     <div class="row"><span class="lbl">베이스 스탯</span> 공 ${sp.base_stats.atk} · 방 ${sp.base_stats.def} · 체 ${sp.base_stats.hp}</div>
+    <div class="row"><span class="lbl">만렙 CP</span> <b>${(sp.max_cp||0).toLocaleString()}</b> <small class="muted">(100% IV Lv50)</small> ${sp.is_final ? '' : '<span class="ovl ovl-cup">진화 가능 — 최종 진화 후 더 높음</span>'}</div>
     ${sectionRows.length
       ? `<table><thead><tr><th>분류</th><th>#</th><th>추천 IV</th><th>추천 기술</th></tr></thead><tbody>${sectionRows.join('')}</tbody></table>`
       : '<div class="muted">랭킹 외 — 보내도 OK</div>'}
@@ -1537,6 +1554,13 @@ document.addEventListener('input', e => {
   });
   const sp_now = statProductAt(sp, ivs.atk, ivs.def, ivs.sta, ivs.lv);
   const pct = (sp_now / sp.max_sp * 100).toFixed(1);
+  // CP at IV/Lv — raw stats (no floor inside), floor only at end
+  const cpmIdx = Math.round((ivs.lv - 1) * 2);
+  const cpm = DATA.cpm[cpmIdx] || 0;
+  const aN = (sp.base_stats.atk + ivs.atk) * cpm;
+  const dN = (sp.base_stats.def + ivs.def) * cpm;
+  const hN = (sp.base_stats.hp + ivs.sta) * cpm;
+  const cp_now = Math.max(10, Math.floor(aN * Math.sqrt(dN) * Math.sqrt(hN) / 10));
   // 같은 속성 최강 필드 비교
   const fields = sp.types.map(t => bestFieldOfType(t, sp.id)).filter(Boolean);
   const verdict = fields.length
@@ -1549,7 +1573,7 @@ document.addEventListener('input', e => {
       })()
     : '';
   card.querySelector('.result').innerHTML =
-    `현재 SP <b>${sp_now.toLocaleString()}</b> (${pct}%) ${verdict}`;
+    `CP <b>${cp_now.toLocaleString()}</b> · SP <b>${sp_now.toLocaleString()}</b> (${pct}%) ${verdict}`;
 });
 
 // ━━━━━━ 핵심/전체 카드 뷰 ━━━━━━
@@ -1880,12 +1904,13 @@ function renderFieldAll() {
     }
     html += `<div class="section-h">${badge(t)} <b>${td.ko}</b> <span class="en">(${t}) — ${td.field_count}종 중 Top 6</span></div>`;
     html += `<table><thead><tr>
-      <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th><th>획득처</th><th>최강 매치업</th><th>추천 기술</th>
+      <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th><th>만렙 CP<br><small>(100% Lv50)</small></th><th>획득처</th><th>최강 매치업</th><th>추천 기술</th>
     </tr></thead><tbody>`;
     td.field_top6.forEach((f, i) => {
       const sp = DATA.species[f.sid];
       const types = sp ? sp.types.map(badge).join(' ') : f.types.map(badge).join(' ');
       const acq = sp ? (sp.acquisition || []).map(a => `<span class="ovl ovl-cup">${a}</span>`).join(' ') : '';
+      const cp = f.max_cp || sp?.max_cp || '—';
       const matchup = f.best_boss_ko
         ? `<b>vs ${f.best_boss_ko}</b><br><small class="muted">${f.best_boss_en} (${f.best_tier_ko}) #${f.rank_in_t || f.rank_any}</small>`
         : '<span class="muted">—</span>';
@@ -1895,6 +1920,7 @@ function renderFieldAll() {
         <td class="num">${String(f.dex).padStart(3,'0')}</td>
         <td>${sp ? nameKo(sp) : '<b>'+f.ko+'</b>'}<br><span class="en">${f.en}</span></td>
         <td>${types}</td>
+        <td class="num"><b>${cp.toLocaleString ? cp.toLocaleString() : cp}</b></td>
         <td>${acq}</td>
         <td>${matchup}</td>
         <td>${moves}</td>
