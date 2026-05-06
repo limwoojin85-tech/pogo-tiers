@@ -1026,6 +1026,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <h1>포켓몬고 박스 의사결정<span class="sub">살릴지 · 보낼지 · IV 등급 · 최종 업데이트 __BUILD_TIME__</span></h1>
       <div class="tabs">
         <div class="tab active" data-tab="types">속성별</div>
+        <div class="tab" data-tab="fieldtop">한눈에</div>
         <div class="tab" data-tab="field">⭐ 필드 추천</div>
         <div class="tab" data-tab="raids">레이드</div>
         <div class="tab" data-tab="gl">슈퍼리그</div>
@@ -1884,6 +1885,42 @@ function evoBadge(kind, note) {
   return `<span class="ovl ${cls}" title="${note||''}">${label}${note ? ': ' + note : ''}</span>`;
 }
 
+// 한눈에 — 18 속성 × 최강 필드 어태커 Top 3 (압축 표 1개)
+function renderFieldTopGlance() {
+  let html = `<div class="iv-note" style="background:#e8f5e9;color:#186118">
+    <b>전속성 필드 최강 한눈에</b> — 보스 약점 본 뒤 즉시 매칭. 6마리 파티용 Top 3.<br>
+    전설/메가/UB 제외. 모두 야생/진화/로켓에서 획득. 100% IV Lv50 풀강 권장.
+  </div>`;
+  html += `<table><thead><tr>
+    <th>속성</th><th>1위</th><th>2위</th><th>3위</th>
+  </tr></thead><tbody>`;
+  for (const t of ALL_TYPES) {
+    const td = DATA.types[t];
+    if (!td) continue;
+    const top3 = (td.field_top6 || []).slice(0, 3);
+    if (!top3.length) continue;
+    if (state.typeFilter && state.typeFilter !== t) continue;
+
+    const cellHtml = (f) => {
+      if (!f) return '<span class="muted">—</span>';
+      const sp = DATA.species[f.sid];
+      const cp = f.max_cp || sp?.max_cp || 0;
+      const moves = `<small class="moves-en">${f.fast_ko} / ${f.charged_ko}</small>`;
+      return `<b>${f.ko}</b><br>
+              <span class="en">${f.en}</span><br>
+              <span class="rk rk-major">CP ${cp.toLocaleString()}</span> ${moves}`;
+    };
+    html += `<tr>
+      <td style="font-size:14px"><b>${badge(t)} ${td.ko}</b></td>
+      <td>${cellHtml(top3[0])}</td>
+      <td>${cellHtml(top3[1])}</td>
+      <td>${cellHtml(top3[2])}</td>
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  return html;
+}
+
 // ⭐ 필드 추천 — 18 속성 전부 한 화면에
 function renderFieldAll() {
   let html = `<div class="iv-note" style="background:#e8f5e9;color:#186118">
@@ -2174,6 +2211,7 @@ function render() {
   const main = document.getElementById('main');
   let html = '';
   if (state.tab === 'types') html = renderTypes();
+  else if (state.tab === 'fieldtop') html = renderFieldTopGlance();
   else if (state.tab === 'field') html = renderFieldAll();
   else if (state.tab === 'gl') html = renderLeagueTab('GL', '슈퍼리그 (Great League)', GL_KEYS, {cap:30});
   else if (state.tab === 'ul') html = renderLeagueTab('UL', '하이퍼리그 (Ultra League)', UL_KEYS, {cap:30});
