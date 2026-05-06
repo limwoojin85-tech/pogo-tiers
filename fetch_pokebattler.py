@@ -22,8 +22,9 @@ COUNTERS_DIR.mkdir(parents=True, exist_ok=True)
 BASE = "https://fight.pokebattler.com"
 UA = {"User-Agent": "pogo-tiers-fetcher/1.0"}
 
-# 4성 이상 — T1/T3 는 가치 없음 (거의 모든 포켓몬이 카운터)
+# 4성 이상 + 다이맥스 — T1/T3 일반은 가치 없음
 TIER_WHITELIST = {
+    # 일반 5성 / 메가 / UB / 엘리트
     "RAID_LEVEL_5",
     "RAID_LEVEL_5_FUTURE",
     "RAID_LEVEL_5_SHADOW",
@@ -35,6 +36,20 @@ TIER_WHITELIST = {
     "RAID_LEVEL_ULTRA_BEAST",
     "RAID_LEVEL_ULTRA_BEAST_FUTURE",
     "RAID_LEVEL_ELITE",
+    # 다이맥스 (Max Battle) — 다른 메커니즘이지만 대비 필요
+    "RAID_LEVEL_1_MAX",
+    "RAID_LEVEL_2_MAX",
+    "RAID_LEVEL_3_MAX",
+    "RAID_LEVEL_3_MAX_FUTURE",
+    "RAID_LEVEL_4_MAX",
+    "RAID_LEVEL_4_MAX_FUTURE",
+    "RAID_LEVEL_5_MAX",
+    "RAID_LEVEL_5_MAX_FUTURE",
+    # 거다이맥스 (Gigantamax) — T6_MAX
+    "RAID_LEVEL_6_MAX",
+    "RAID_LEVEL_6_MAX_FUTURE",
+    "RAID_LEVEL_6_5_MAX",
+    "RAID_LEVEL_6_5_MAX_FUTURE",
 }
 
 # 카운터 쿼리 — 평균 날씨 / 일반 친구도 / 현실적 랜덤 회피

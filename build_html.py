@@ -270,6 +270,64 @@ def collect_all(species, moves, trans):
     NON_FIELD_TAGS = {"legendary", "mythical", "ultrabeast", "wildlegendary"}
     pokemon_by_sid = {p["speciesId"]: p for p in gm["pokemon"]}
 
+    # 베이비 포켓몬 — 알 부화로만 획득
+    BABY_POKEMON = {
+        "pichu", "cleffa", "igglybuff", "togepi", "tyrogue",
+        "smoochum", "elekid", "magby", "azurill", "wynaut",
+        "budew", "chingling", "bonsly", "mime_jr", "happiny",
+        "munchlax", "riolu", "mantyke", "toxel",
+    }
+
+    # 획득처 분류
+    def acquisition_methods(sid: str) -> list[str]:
+        p = pokemon_by_sid.get(sid)
+        if not p:
+            return ["?"]
+        tags = set(p.get("tags", []))
+        methods: list[str] = []
+
+        if sid.endswith("_shadow"):
+            return ["로켓 그런츠/리더"]
+        if "_mega" in sid or "_primal" in sid:
+            return ["메가 에너지로 진화"]
+
+        if "wildlegendary" in tags:
+            return ["야생 (희귀)", "5성 레이드"]
+        if "legendary" in tags:
+            base = sid.replace("_galarian", "").replace("_hisuian", "").replace("_alolan", "")
+            if base in raid_boss_sids or sid in raid_boss_sids:
+                return ["5성/메가/UB 레이드"]
+            return ["레이드"]
+        if "mythical" in tags:
+            return ["스페셜 리서치"]
+        if "ultrabeast" in tags:
+            return ["UB 레이드"]
+        if sid in raid_boss_sids:
+            # paradox 등
+            methods.append("레이드 한정")
+        if "regional" in tags:
+            methods.append("지역 한정")
+        if sid in BABY_POKEMON:
+            return ["알 부화 (Baby)"]
+        if "alolan" in tags:
+            methods.append("알/이벤트 (알로라)")
+        elif "galarian" in tags:
+            methods.append("알/이벤트 (가라르)")
+        elif "hisuian" in tags:
+            methods.append("리서치/이벤트 (히스이)")
+        elif "paldean" in tags:
+            methods.append("리서치/이벤트 (팔데아)")
+        if not methods:
+            # parent 가 야생/baby 면 진화로
+            parent = parent_map.get(sid)
+            if parent in BABY_POKEMON:
+                methods.append("진화 (베이비 부화)")
+            elif parent:
+                methods.append("진화")
+            else:
+                methods.append("야생/알/리서치")
+        return methods
+
     def is_field_catchable(sid: str, raid_boss_sids: set) -> bool:
         if "_mega" in sid or "_primal" in sid:
             return False
@@ -345,20 +403,36 @@ def collect_all(species, moves, trans):
 
         mega_forms = has_mega_form(sid)
 
+        # 베이스 스탯 (DPS 비교용)
+        gm_p = pokemon_by_sid.get(sid)
+        base_stats = (gm_p or {}).get("baseStats") or {"atk": 0, "def": 0, "hp": 0}
+
+        # 100% IV Lv50 stat product (raid 비교 기준)
+        cpm50 = 0.84029999
+        a_max = (base_stats.get("atk", 0) + 15) * cpm50
+        d_max = (base_stats.get("def", 0) + 15) * cpm50
+        h_max = int((base_stats.get("hp", 0) + 15) * cpm50)
+        max_sp = round(a_max * d_max * h_max)
+
         species_out[sid] = {
             "id": sid,
             "dex": info["dex"],
             "ko": species_ko_name(info["dex"], info["name_en"], trans),
             "en": info["name_en"],
             "types": types,
+            "base_stats": {"atk": base_stats.get("atk", 0),
+                           "def": base_stats.get("def", 0),
+                           "hp": base_stats.get("hp", 0)},
+            "max_sp": max_sp,    # 100% IV Lv50
             "weak": {t: round(m, 4) for t, m in weak.items()},
             "resist": {t: round(m, 4) for t, m in resist.items()},
             "chain_ko": chain_kos,
             "chain_en": chain_ens,
             "rank1_iv": rank1,
-            "evo_kind": evo_kind,    # trade/buddy/walk/item/region/None
+            "evo_kind": evo_kind,
             "evo_note": evo_note,
-            "mega_forms": mega_forms,  # 이 종이 메가 가능한지 — 폼 sid 리스트
+            "mega_forms": mega_forms,
+            "acquisition": [],  # 보스 셋 완성 후 채움
             "pvp": [],
             "raid": [],
         }
@@ -500,9 +574,10 @@ def collect_all(species, moves, trans):
             "counters": counters,
         }
 
-    # 필드 포획 가능 여부 — 보스 셋 완성 후 마킹
+    # 필드 포획 가능 여부 + 획득처 — 보스 셋 완성 후 마킹
     for sid, sdata in species_out.items():
         sdata["is_field"] = is_field_catchable(sid, raid_boss_sids)
+        sdata["acquisition"] = acquisition_methods(sid)
 
     # 핵심 마킹 + 투자 가이드
     essential_ids = set()
@@ -713,12 +788,38 @@ def collect_all(species, moves, trans):
             "field_count": len(field_candidates),
         }
 
+    # CPM 테이블 — Pokemon GO 공식 값. Lv 1.0 → 50.0 (0.5 간격)
+    # 인덱스: (lv - 1) * 2 → 0 = Lv1, 98 = Lv50
+    cpm_table = [
+        0.094, 0.135137432, 0.16639787, 0.192650919, 0.21573247,
+        0.236572661, 0.25572005, 0.273530381, 0.29024988, 0.306057377,
+        0.3210876, 0.335445036, 0.34921268, 0.362457751, 0.37523559,
+        0.387592406, 0.39956728, 0.411193551, 0.42250001, 0.432926419,
+        0.44310755, 0.453059958, 0.46279839, 0.472336083, 0.48168495,
+        0.4908558, 0.49985844, 0.508701765, 0.51739395, 0.525942511,
+        0.53435433, 0.542635767, 0.55079269, 0.558830576, 0.56675452,
+        0.574569153, 0.58227891, 0.589887917, 0.59740001, 0.604818814,
+        0.61215729, 0.619399365, 0.62656713, 0.633644533, 0.64065295,
+        0.647576426, 0.65443563, 0.661214806, 0.667934, 0.674577537,
+        0.68116492, 0.687680648, 0.69414365, 0.700538673, 0.70688421,
+        0.713164996, 0.71939909, 0.725571552, 0.7317, 0.734741009,
+        0.73776948, 0.740785574, 0.74378943, 0.746781211, 0.74976104,
+        0.752729087, 0.75568551, 0.758630378, 0.76156384, 0.764486065,
+        0.76739717, 0.770297266, 0.7731865, 0.776064962, 0.77893275,
+        0.781790055, 0.78463697, 0.787473578, 0.79030001, 0.792803968,
+        0.79530001, 0.797803921, 0.8003, 0.802803968, 0.8053,
+        0.807803921, 0.81029999, 0.812803968, 0.81529999, 0.817803921,
+        0.82029999, 0.822803895, 0.82529999, 0.827803895, 0.82999998,
+        0.832803905, 0.83529997, 0.837803885, 0.84029999, 0.842803895, 0.84529999,
+    ]
+
     return {
         "species": species_out,
         "bosses": bosses_out,
         "leagues": leagues_out,
         "types": types_out,
         "types_ko": types_ko,
+        "cpm": cpm_table,
         "essentials_count": len(essential_ids),
         "transfer_groups": transfer_groups,
         "mega_keep_groups": mega_keep_groups,
@@ -843,6 +944,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .ovl-raid { background: #ffe8eb; color: var(--pri1); }
   .ovl-cup { background: #f0f0f3; color: var(--muted); }
   small.muted { color: var(--muted); font-size: 10px; font-weight: 400; }
+  .ivcalc { background: #fafafa; border-radius: 6px; padding: 8px 10px;
+            margin-top: 8px; }
+  .ivcalc input[type="number"] { padding: 3px 5px; font-size: 12px;
+            border: 1px solid #d0d0d6; border-radius: 4px; }
+  .ivcalc table { margin: 0; }
+  .ivcalc .pri-1 { color: var(--pri1); font-weight: 600; }
+  .ivcalc .pri-3 { color: var(--pri3); font-weight: 600; }
 
   .section-h { font-size: 13px; font-weight: 700; color: var(--text);
                margin: 16px 0 6px 0; padding-bottom: 4px;
@@ -1075,11 +1183,12 @@ function renderTypeDetail(t) {
       전설은 모두가 못 잡으니 <b>야생/알/리서치/로켓에서 얻을 수 있는 종</b>만. 100% IV 우선, Lv 50 강화 권장.
     </div>`;
     html += `<table><thead><tr>
-      <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th><th>최강 매치업</th><th>추천 기술</th>
+      <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th><th>획득처</th><th>최강 매치업</th><th>추천 기술</th>
     </tr></thead><tbody>`;
     td.field_top6.forEach((f, i) => {
       const sp = DATA.species[f.sid];
       const types = sp ? sp.types.map(badge).join(' ') : f.types.map(badge).join(' ');
+      const acq = sp ? (sp.acquisition || []).map(a => `<span class="ovl ovl-cup">${a}</span>`).join(' ') : '';
       const matchup = f.best_boss_ko
         ? `<b>vs ${f.best_boss_ko}</b><br><small class="muted">${f.best_boss_en} (${f.best_tier_ko}) #${f.rank_in_t || f.rank_any}</small>`
         : '<span class="muted">—</span>';
@@ -1089,6 +1198,7 @@ function renderTypeDetail(t) {
         <td class="num">${String(f.dex).padStart(3,'0')}</td>
         <td>${sp ? nameKo(sp) : '<b>'+f.ko+'</b>'}<br><span class="en">${f.en}</span></td>
         <td>${types}</td>
+        <td>${acq}</td>
         <td>${matchup}</td>
         <td>${moves}</td>
       </tr>`;
@@ -1290,6 +1400,77 @@ function renderTriage() {
   return html;
 }
 
+// 비교 — 100% IV Lv50 기준 stat product 백분율 vs 최강 필드 같은 속성
+function statProductAt(sp, atk_iv, def_iv, sta_iv, level) {
+  const idx = Math.round((level - 1) * 2);
+  const cpm = DATA.cpm[idx];
+  if (!cpm || !sp.base_stats) return 0;
+  const a = (sp.base_stats.atk + atk_iv) * cpm;
+  const d = (sp.base_stats.def + def_iv) * cpm;
+  const h = Math.floor((sp.base_stats.hp + sta_iv) * cpm);
+  return Math.round(a * d * h);
+}
+
+function bestFieldOfType(t, exceptSid) {
+  let best = null;
+  for (const sp of Object.values(DATA.species)) {
+    if (!sp.is_field) continue;
+    if (!sp.types.includes(t)) continue;
+    if (sp.id === exceptSid) continue;
+    if (!best || sp.max_sp > best.max_sp) best = sp;
+  }
+  return best;
+}
+
+function comparisonBlock(sp) {
+  // sp 의 각 속성에 대해 최강 필드 비교 + IV 입력 기능
+  if (!sp.max_sp || !sp.base_stats?.atk) return '';
+  const cardId = 'cmp_' + sp.id;
+  const initialSP = sp.max_sp;
+  // 같은 속성 최강 필드 (자기 제외)
+  const fieldRefs = sp.types.map(t => {
+    const ref = bestFieldOfType(t, sp.id);
+    return ref ? { type: t, ref } : null;
+  }).filter(Boolean);
+
+  const refsHtml = fieldRefs.map(r => {
+    const pct = (sp.max_sp / r.ref.max_sp * 100).toFixed(0);
+    const cls = sp.max_sp >= r.ref.max_sp ? 'pri-1' : 'pri-3';
+    return `<tr>
+      <td>${badge(r.type)} 최강 필드</td>
+      <td><b>${r.ref.ko}</b><br><span class="en">${r.ref.en}</span></td>
+      <td class="num">${r.ref.max_sp.toLocaleString()}</td>
+      <td class="num"><b class="${cls}">${pct}%</b></td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="iv-note" style="background:#f0f8ff;color:var(--pri3)">
+    <b>성능 비교 (Lv50 100% IV 기준 stat product)</b> — 풀강할 가치 판단용
+  </div>
+  <div class="ivcalc" id="${cardId}">
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px">
+      <span><b>내 IV</b></span>
+      공 <input type="number" min="0" max="15" value="15" data-iv="atk" style="width:50px">
+      방 <input type="number" min="0" max="15" value="15" data-iv="def" style="width:50px">
+      체 <input type="number" min="0" max="15" value="15" data-iv="sta" style="width:50px">
+      Lv <input type="number" min="1" max="51" step="0.5" value="50" data-iv="lv" style="width:60px">
+      <button data-act="calc">계산</button>
+      <span class="result" style="margin-left:auto;font-weight:600"></span>
+    </div>
+    <table style="margin-top:8px"><thead><tr>
+      <th>비교</th><th>대상</th><th>SP (100% Lv50)</th><th>이 종 대비</th>
+    </tr></thead><tbody>
+      <tr style="background:#fffbe6">
+        <td>이 포켓몬 (100%)</td>
+        <td><b>${sp.ko}</b></td>
+        <td class="num">${sp.max_sp.toLocaleString()}</td>
+        <td class="num"><b>100%</b> (기준)</td>
+      </tr>
+      ${refsHtml || '<tr><td colspan="4" class="muted">같은 속성 필드 비교 대상 없음</td></tr>'}
+    </tbody></table>
+  </div>`;
+}
+
 function renderSpeciesDetailCard(sp) {
   const gl = bestRankIn(sp, GL_KEYS);
   const ul = bestRankIn(sp, UL_KEYS);
@@ -1325,15 +1506,50 @@ function renderSpeciesDetailCard(sp) {
   }
   for (const c of cups.slice(0, 5)) addRow(c.league_ko, c, ivCellGL(sp));
 
-  return `<div class="card">
+  // 획득처
+  const acqStr = (sp.acquisition || []).map(a => `<span class="ovl ovl-cup">${a}</span>`).join(' ');
+
+  return `<div class="card" data-sid="${sp.id}">
     <h2><span class="dex">#${String(sp.dex).padStart(3,'0')}</span>
         ${nameKo(sp)} <span class="en">/ ${sp.en}</span> ${sp.types.map(badge).join(' ')}</h2>
     ${verdictHtml(sp.invest)}
+    <div class="row"><span class="lbl">획득처</span> ${acqStr || '<span class="muted">—</span>'}</div>
+    <div class="row"><span class="lbl">베이스 스탯</span> 공 ${sp.base_stats.atk} · 방 ${sp.base_stats.def} · 체 ${sp.base_stats.hp}</div>
     ${sectionRows.length
       ? `<table><thead><tr><th>분류</th><th>#</th><th>추천 IV</th><th>추천 기술</th></tr></thead><tbody>${sectionRows.join('')}</tbody></table>`
       : '<div class="muted">랭킹 외 — 보내도 OK</div>'}
+    ${comparisonBlock(sp)}
   </div>`;
 }
+
+// IV 계산기 인터랙션 — 검색 탭에서 input 수정 시 결과 갱신
+document.addEventListener('input', e => {
+  if (!e.target.matches('.ivcalc input')) return;
+  const card = e.target.closest('.ivcalc');
+  if (!card) return;
+  const sid = card.id.replace('cmp_', '');
+  const sp = DATA.species[sid];
+  if (!sp) return;
+  const ivs = {atk:15, def:15, sta:15, lv:50};
+  card.querySelectorAll('input[data-iv]').forEach(inp => {
+    ivs[inp.dataset.iv] = parseFloat(inp.value) || 0;
+  });
+  const sp_now = statProductAt(sp, ivs.atk, ivs.def, ivs.sta, ivs.lv);
+  const pct = (sp_now / sp.max_sp * 100).toFixed(1);
+  // 같은 속성 최강 필드 비교
+  const fields = sp.types.map(t => bestFieldOfType(t, sp.id)).filter(Boolean);
+  const verdict = fields.length
+    ? (() => {
+        const fieldMax = Math.max(...fields.map(f => f.max_sp));
+        const ratio = sp_now / fieldMax * 100;
+        return ratio >= 100
+          ? `<span class="pri-1">필드 최강(${fieldMax.toLocaleString()}) 보다 강함 — 풀강 가치</span>`
+          : `<span class="pri-3">필드 최강의 ${ratio.toFixed(0)}% — 풀강 보다 필드 100% 가 나을 수 있음</span>`;
+      })()
+    : '';
+  card.querySelector('.result').innerHTML =
+    `현재 SP <b>${sp_now.toLocaleString()}</b> (${pct}%) ${verdict}`;
+});
 
 // ━━━━━━ 핵심/전체 카드 뷰 ━━━━━━
 function renderCard(sp) {
@@ -1386,12 +1602,19 @@ function paginate(list, renderFn, perPage) {
 // ━━━━━━ 레이드 ━━━━━━
 function renderRaids() {
   const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite',
-                     'T5*','T5sh*','Mega*','MegaT5*','UB*'];
+                     'Gmax','GmaxX','Dmax5','Dmax4','Dmax3','Dmax2','Dmax1',
+                     'T5*','T5sh*','Mega*','MegaT5*','UB*',
+                     'Gmax*','GmaxX*','Dmax5*','Dmax4*','Dmax3*'];
   const titles = {
     T5:'현재 5성', T5sh:'현재 쉐도우 5성', Mega:'현재 메가', MegaT5:'메가 5성',
-    UB:'울트라비스트', Elite:'엘리트', T3:'현재 3성', T1:'현재 1성',
+    UB:'울트라비스트', Elite:'엘리트',
+    Gmax:'거다이맥스', GmaxX:'거다이맥스 특수',
+    Dmax5:'다이맥스 5성', Dmax4:'다이맥스 4성', Dmax3:'다이맥스 3성',
+    Dmax2:'다이맥스 2성', Dmax1:'다이맥스 1성',
     'T5*':'예정 5성', 'T5sh*':'예정 쉐도우 5성', 'Mega*':'예정 메가',
     'MegaT5*':'예정 메가 5성', 'UB*':'예정 울트라비스트',
+    'Gmax*':'예정 거다이맥스', 'GmaxX*':'예정 거다이맥스 특수',
+    'Dmax5*':'예정 다이맥스 5성', 'Dmax4*':'예정 다이맥스 4성', 'Dmax3*':'예정 다이맥스 3성',
   };
   const grouped = {};
   for (const b of Object.values(DATA.bosses)) {
@@ -1724,12 +1947,19 @@ function renderTransfer() {
 // 레이드 — 보스별 그룹 + 보스 약점 + 카운터 Top 8
 function renderRaidsView() {
   const tierOrder = ['T5','T5sh','Mega','MegaT5','UB','Elite',
-                     'T5*','T5sh*','Mega*','MegaT5*','UB*'];
+                     'Gmax','GmaxX','Dmax5','Dmax4','Dmax3','Dmax2','Dmax1',
+                     'T5*','T5sh*','Mega*','MegaT5*','UB*',
+                     'Gmax*','GmaxX*','Dmax5*','Dmax4*','Dmax3*'];
   const titles = {
     T5:'현재 5성', T5sh:'현재 쉐도우 5성', Mega:'현재 메가', MegaT5:'메가 5성',
-    UB:'울트라비스트', Elite:'엘리트', T3:'현재 3성', T1:'현재 1성',
+    UB:'울트라비스트', Elite:'엘리트',
+    Gmax:'거다이맥스', GmaxX:'거다이맥스 특수',
+    Dmax5:'다이맥스 5성', Dmax4:'다이맥스 4성', Dmax3:'다이맥스 3성',
+    Dmax2:'다이맥스 2성', Dmax1:'다이맥스 1성',
     'T5*':'예정 5성', 'T5sh*':'예정 쉐도우 5성', 'Mega*':'예정 메가',
     'MegaT5*':'예정 메가 5성', 'UB*':'예정 울트라비스트',
+    'Gmax*':'예정 거다이맥스', 'GmaxX*':'예정 거다이맥스 특수',
+    'Dmax5*':'예정 다이맥스 5성', 'Dmax4*':'예정 다이맥스 4성', 'Dmax3*':'예정 다이맥스 3성',
   };
   const grouped = {};
   for (const b of Object.values(DATA.bosses)) {

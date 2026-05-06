@@ -142,6 +142,20 @@ TIER_LABEL = {
     "RAID_LEVEL_ULTRA_BEAST": ("울트라비스트", "UB"),
     "RAID_LEVEL_ULTRA_BEAST_FUTURE": ("울트라비스트 (예정)", "UB*"),
     "RAID_LEVEL_ELITE": ("엘리트", "Elite"),
+    # 다이맥스
+    "RAID_LEVEL_1_MAX": ("다이맥스 1성", "Dmax1"),
+    "RAID_LEVEL_2_MAX": ("다이맥스 2성", "Dmax2"),
+    "RAID_LEVEL_3_MAX": ("다이맥스 3성", "Dmax3"),
+    "RAID_LEVEL_3_MAX_FUTURE": ("다이맥스 3성 (예정)", "Dmax3*"),
+    "RAID_LEVEL_4_MAX": ("다이맥스 4성", "Dmax4"),
+    "RAID_LEVEL_4_MAX_FUTURE": ("다이맥스 4성 (예정)", "Dmax4*"),
+    "RAID_LEVEL_5_MAX": ("다이맥스 5성", "Dmax5"),
+    "RAID_LEVEL_5_MAX_FUTURE": ("다이맥스 5성 (예정)", "Dmax5*"),
+    # 거다이맥스 (T6_MAX)
+    "RAID_LEVEL_6_MAX": ("거다이맥스", "Gmax"),
+    "RAID_LEVEL_6_MAX_FUTURE": ("거다이맥스 (예정)", "Gmax*"),
+    "RAID_LEVEL_6_5_MAX": ("거다이맥스 (특수)", "GmaxX"),
+    "RAID_LEVEL_6_5_MAX_FUTURE": ("거다이맥스 (예정·특수)", "GmaxX*"),
 }
 
 # 폼 모디파이어 영→한
