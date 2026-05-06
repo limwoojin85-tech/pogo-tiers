@@ -2204,11 +2204,34 @@ function analyzeOne(sp, ivA, ivD, ivS, level, isLucky) {
   const isHundo = ivA === 15 && ivD === 15 && ivS === 15;
   const ivSum = ivA + ivD + ivS;
 
-  // 마스터/레이드 — 최강일수록 좋음
+  // 마스터/레이드 — ATK IV 가 핵심 (DEF/HP 는 부활 가능해서 영향 적음)
   if ((ml && ml.rank <= 15) || (raid && raid.is_essential_tier && raid.rank <= 8)) {
-    if (isHundo) decisions.push({pri:1, text:`🔴 마스터/레이드 풀강 (100%)`, why:`${ml?'ML#'+ml.rank:''}${raid?' / vs '+raid.boss_ko+'#'+raid.rank:''}`});
-    else if (ivSum >= 42) decisions.push({pri:2, text:`🟡 마스터/레이드 후보 (IV 좋음 ${ivSum}/45)`, why:'풀강 가치 있지만 100% 잡으면 교체'});
-    else if (ivSum >= 36) decisions.push({pri:3, text:`🔵 마스터/레이드 픽이지만 IV 부족 (${ivSum}/45)`, why:'더 좋은 거 잡으면 송출'});
+    const isML = ml && ml.rank <= 15;
+    const ctxBoss = raid ? `vs ${raid.boss_ko}#${raid.rank}` : '';
+    if (isHundo) {
+      decisions.push({pri:1, text:`🔴 마스터/레이드 풀강 (100%, ATK 15)`,
+                      why:`${isML?'ML#'+ml.rank:''}${ctxBoss?' / '+ctxBoss:''}`});
+    } else if (ivA === 15 && ivSum >= 38) {
+      // ATK 15 + 합 38+ — 레이드 최적 (ML 도 거의 풀강 가치)
+      decisions.push({pri:1, text:`🔴 레이드 최적 (ATK 15, ${ivSum}/45)`,
+                      why:`공격력 풀 → DPS 손실 X · ${ctxBoss}`});
+    } else if (ivA >= 14 && ivSum >= 38) {
+      decisions.push({pri:2, text:`🟡 레이드 강 (ATK ${ivA}, ${ivSum}/45)`,
+                      why:`공격력 거의 풀 · 100% 잡으면 교체${isML?' (ML 은 100% 우선)':''}`});
+    } else if (ivA === 15 && ivSum >= 30) {
+      decisions.push({pri:2, text:`🟡 레이드 가능 (ATK 15, 약방어)`,
+                      why:'레이드용은 OK, ML 은 100% 우선'});
+    } else if (ivSum >= 42) {
+      // 100%에 가깝지만 ATK 가 낮음
+      decisions.push({pri:2, text:`🟡 마스터 후보 (IV ${ivSum}/45 · ATK ${ivA})`,
+                      why:'ML 강함, 레이드는 ATK 낮아 약함'});
+    } else if (ivA >= 13 && ivSum >= 36) {
+      decisions.push({pri:3, text:`🔵 레이드 보조 (ATK ${ivA})`,
+                      why:'더 좋은 거 잡으면 송출'});
+    } else if (ivSum >= 36) {
+      decisions.push({pri:3, text:`🔵 IV 부족 — 송출 후보`,
+                      why:'ATK 낮아 레이드 비효율'});
+    }
   }
 
   // 슈퍼리그

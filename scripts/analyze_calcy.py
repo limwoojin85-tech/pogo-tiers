@@ -242,17 +242,23 @@ def analyze_one(sp: dict, ivA: int, ivD: int, ivS: int, level: float, is_lucky: 
 
     decisions = []
 
-    # 마스터/레이드
+    # 마스터/레이드 — ATK IV 가 핵심
     if (ml and ml["rank"] <= 15) or (raid and raid["is_essential_tier"] and raid["rank"] <= 8):
+        ctx = f"ML#{ml['rank']}" if ml and ml["rank"] <= 15 else (f"vs {raid['boss_ko']}#{raid['rank']}" if raid else "")
         if is_hundo:
-            decisions.append((1, "🔴 마스터/레이드 풀강 (100%)",
-                              f"ML#{ml['rank']}" if ml else f"vs {raid['boss_ko']}#{raid['rank']}"))
+            decisions.append((1, "🔴 마스터/레이드 풀강 (100%, ATK 15)", ctx))
+        elif ivA == 15 and iv_sum >= 38:
+            decisions.append((1, f"🔴 레이드 최적 (ATK 15, {iv_sum}/45)", f"공격력 풀 / {ctx}"))
+        elif ivA >= 14 and iv_sum >= 38:
+            decisions.append((2, f"🟡 레이드 강 (ATK {ivA}, {iv_sum}/45)", "100% 잡으면 교체"))
+        elif ivA == 15 and iv_sum >= 30:
+            decisions.append((2, "🟡 레이드 가능 (ATK 15, 약방어)", "레이드용 OK"))
         elif iv_sum >= 42:
-            decisions.append((2, f"🟡 마스터/레이드 후보 (IV {iv_sum}/45)",
-                              "100% 잡으면 교체"))
+            decisions.append((2, f"🟡 마스터 후보 (IV {iv_sum}/45, ATK {ivA})", "ML 강함, 레이드는 약함"))
+        elif ivA >= 13 and iv_sum >= 36:
+            decisions.append((3, f"🔵 레이드 보조 (ATK {ivA})", "더 좋은 거 잡으면 송출"))
         elif iv_sum >= 36:
-            decisions.append((3, f"🔵 마스터/레이드 IV 부족 ({iv_sum}/45)",
-                              "더 좋은 거 잡으면 송출"))
+            decisions.append((3, "🔵 IV 부족", "ATK 낮아 레이드 비효율"))
 
     # 슈퍼리그
     if gl and gl["rank"] <= 20 and gl_score:
