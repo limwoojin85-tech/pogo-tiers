@@ -2118,14 +2118,14 @@ function analyzeOne(sp, ivA, ivD, ivS, level, isLucky) {
   }
 
   // 슈퍼리그
-  if (gl && gl.rank <= 20 && glScore) {
+  if (gl && gl.rank <= 30 && glScore) {
     if (glScore.pct >= 99) decisions.push({pri:1, text:`🔴 슈퍼리그 #${gl.rank} 거의 완벽 (${glScore.pct.toFixed(1)}%)`, why:`Lv${glScore.level} CP${glScore.cp}`});
     else if (glScore.pct >= 96) decisions.push({pri:2, text:`🟡 슈퍼리그 #${gl.rank} 쓸만 (${glScore.pct.toFixed(1)}%)`, why:`Lv${glScore.level} CP${glScore.cp}`});
     else if (glScore.pct >= 90) decisions.push({pri:3, text:`🔵 슈퍼리그 #${gl.rank} 부족 (${glScore.pct.toFixed(1)}%)`, why:'rank-1 IV 보다 약함'});
   }
 
   // 하이퍼리그
-  if (ul && ul.rank <= 20 && ulScore) {
+  if (ul && ul.rank <= 30 && ulScore) {
     if (ulScore.pct >= 99) decisions.push({pri:1, text:`🔴 하이퍼리그 #${ul.rank} 거의 완벽 (${ulScore.pct.toFixed(1)}%)`, why:`Lv${ulScore.level} CP${ulScore.cp}`});
     else if (ulScore.pct >= 96) decisions.push({pri:2, text:`🟡 하이퍼리그 #${ul.rank} 쓸만 (${ulScore.pct.toFixed(1)}%)`, why:`Lv${ulScore.level} CP${ulScore.cp}`});
   }
