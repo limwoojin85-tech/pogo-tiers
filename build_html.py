@@ -263,6 +263,29 @@ def collect_all(species, moves, trans):
                       f"{sid}_mega_z", f"{sid}_primal"]
         return [c for c in candidates if c in all_sids]
 
+    # 필드 포획 가능 여부 — 레이드/대회 한정 X
+    # 1) tags: legendary/mythical/ultrabeast/wildlegendary → 제외
+    # 2) sid 에 _mega/_primal → 메가는 베이스만 잡고 변신
+    # 3) tag 누락된 raid-exclusive (paradox 등) — boss 셋으로 보강 (별도 단계)
+    NON_FIELD_TAGS = {"legendary", "mythical", "ultrabeast", "wildlegendary"}
+    pokemon_by_sid = {p["speciesId"]: p for p in gm["pokemon"]}
+
+    def is_field_catchable(sid: str, raid_boss_sids: set) -> bool:
+        if "_mega" in sid or "_primal" in sid:
+            return False
+        p = pokemon_by_sid.get(sid)
+        if not p:
+            return False
+        tags = set(p.get("tags", []))
+        if tags & NON_FIELD_TAGS:
+            return False
+        # paradox 등 태그 누락 — T5+/Mega/UB 보스로 등장하면 사실상 레이드 한정
+        # 단 _shadow 는 로켓에서 잡으니 field 인정
+        base_sid = sid.replace("_shadow", "")
+        if base_sid in raid_boss_sids:
+            return False
+        return True
+
     def evolution_chain(sid: str) -> list[str]:
         """[base, ..., current] — 진화 사슬 (현재 포함)."""
         chain = [sid]
@@ -396,7 +419,8 @@ def collect_all(species, moves, trans):
             })
         leagues_out[league_key] = league_out
 
-    # 레이드 데이터
+    # 레이드 데이터 + 필드 포획 판단용 보스 sid 셋
+    raid_boss_sids: set[str] = set()
     bosses_out: dict[str, dict] = {}
     for f in sorted(PB.glob("*.json")):
         try:
@@ -411,6 +435,9 @@ def collect_all(species, moves, trans):
             continue
         tier_ko, tier_en = TIER_LABEL[tier]
         boss_sid = pb_to_pvpoke_id(boss_pb)
+        raid_boss_sids.add(boss_sid)
+        # 베이스도 — _shadow_form 의 베이스
+        raid_boss_sids.add(boss_sid.replace("_shadow", ""))
         boss_info = species.get(boss_sid, {})
         boss_dex = boss_info.get("dex", 9999)
         boss_en = boss_info.get("name_en", boss_pb.replace("_", " ").title())
@@ -472,6 +499,10 @@ def collect_all(species, moves, trans):
             "tier_ko": tier_ko, "tier_en": tier_en,
             "counters": counters,
         }
+
+    # 필드 포획 가능 여부 — 보스 셋 완성 후 마킹
+    for sid, sdata in species_out.items():
+        sdata["is_field"] = is_field_catchable(sid, raid_boss_sids)
 
     # 핵심 마킹 + 투자 가이드
     essential_ids = set()
@@ -618,6 +649,47 @@ def collect_all(species, moves, trans):
             "essential": s["essential"],
         } for s in type_species[:30]]
 
+        # 2.5 ★ 필드 추천 — 레이드에서 쓸 수 있는 비전설/비메가 (Top 6)
+        # T 속성 약점 보스 키 셋
+        tweak_keys = {b["boss_key"] for b in weak_bosses}
+        field_candidates = []
+        for sp in species_out.values():
+            if t not in sp["types"]:
+                continue
+            if not sp.get("is_field"):
+                continue
+            if not sp["raid"]:
+                continue  # 레이드 카운터 역할 있어야 함
+            # T 약점 보스 vs 일반 보스 둘 다 가능. T-약점 매칭이 우선.
+            best_t = 9999
+            best_any = 9999
+            best_entry = None
+            for r in sp["raid"]:
+                if r["boss_key"] in tweak_keys and r["rank"] < best_t:
+                    best_t = r["rank"]
+                    best_entry = r
+                if r["rank"] < best_any:
+                    best_any = r["rank"]
+                    if best_t == 9999:
+                        best_entry = r
+            score = best_t if best_t < 9999 else (best_any + 100)
+            field_candidates.append({
+                "sid": sp["id"], "dex": sp["dex"], "ko": sp["ko"], "en": sp["en"],
+                "types": sp["types"],
+                "rank_in_t": best_t if best_t < 9999 else None,
+                "rank_any": best_any,
+                "best_boss_ko": best_entry["boss_ko"] if best_entry else "",
+                "best_boss_en": best_entry["boss_en"] if best_entry else "",
+                "best_tier_ko": best_entry["tier_ko"] if best_entry else "",
+                "fast_ko": best_entry["fast_ko"] if best_entry else "",
+                "fast_en": best_entry["fast_en"] if best_entry else "",
+                "charged_ko": best_entry["charged_ko"] if best_entry else "",
+                "charged_en": best_entry["charged_en"] if best_entry else "",
+                "score": score,
+            })
+        field_candidates.sort(key=lambda x: (x["score"], x["dex"]))
+        field_top6 = field_candidates[:6]
+
         # 3. 이 속성이 핵심인 PvP 리그
         league_uses = []
         for lk, lg in leagues_out.items():
@@ -634,9 +706,11 @@ def collect_all(species, moves, trans):
             "type": t, "ko": types_ko.get(t, t),
             "weak_bosses": weak_bosses,
             "core_species": core,
+            "field_top6": field_top6,
             "league_uses": league_uses,
             "boss_count": len(weak_bosses),
             "core_count": len(type_species),
+            "field_count": len(field_candidates),
         }
 
     return {
@@ -993,6 +1067,34 @@ function renderTypeDetail(t) {
     <h2>${badge(t)} ${td.ko} <span class="en">/ ${t}</span></h2>
     <div class="stat">이 속성으로 공격하면 효과적인 곳, 그리고 키울 가치 있는 종.</div>
   </div>`;
+
+  // ★ 필드 추천 — 레이드에서 쓸 수 있는 비전설/비메가 Top 6
+  if (td.field_top6 && td.field_top6.length) {
+    html += `<div class="section-h">⭐ 필드 추천 — 레이드에서 쓸 수 있는 ${td.ko} 어태커 Top 6 <span class="en">(전설/메가 제외, ${td.field_count}종 중)</span></div>`;
+    html += `<div class="iv-note" style="background:#e8f5e9;color:#186118">
+      전설은 모두가 못 잡으니 <b>야생/알/리서치/로켓에서 얻을 수 있는 종</b>만. 100% IV 우선, Lv 50 강화 권장.
+    </div>`;
+    html += `<table><thead><tr>
+      <th>#</th><th>Dex</th><th>포켓몬</th><th>속성</th><th>최강 매치업</th><th>추천 기술</th>
+    </tr></thead><tbody>`;
+    td.field_top6.forEach((f, i) => {
+      const sp = DATA.species[f.sid];
+      const types = sp ? sp.types.map(badge).join(' ') : f.types.map(badge).join(' ');
+      const matchup = f.best_boss_ko
+        ? `<b>vs ${f.best_boss_ko}</b><br><small class="muted">${f.best_boss_en} (${f.best_tier_ko}) #${f.rank_in_t || f.rank_any}</small>`
+        : '<span class="muted">—</span>';
+      const moves = moveSplitHtml(f.fast_ko, f.fast_en, f.charged_ko, f.charged_en);
+      html += `<tr>
+        <td class="rank">${i + 1}</td>
+        <td class="num">${String(f.dex).padStart(3,'0')}</td>
+        <td>${sp ? nameKo(sp) : '<b>'+f.ko+'</b>'}<br><span class="en">${f.en}</span></td>
+        <td>${types}</td>
+        <td>${matchup}</td>
+        <td>${moves}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
 
   // 1. 약점 보스
   if (td.weak_bosses.length) {
