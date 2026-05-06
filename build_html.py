@@ -1022,6 +1022,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .ivcalc table { margin: 0; }
   .ivcalc .pri-1 { color: var(--pri1); font-weight: 600; }
   .ivcalc .pri-3 { color: var(--pri3); font-weight: 600; }
+  button.ctrl { padding: 6px 14px; background: var(--accent); color: #fff;
+                border: none; border-radius: 6px; font-size: 13px; cursor: pointer;
+                font-weight: 600; }
+  button.ctrl:hover { background: #1d6bd6; }
+  textarea { font-family: 'Consolas', 'Menlo', monospace; }
 
   .section-h { font-size: 13px; font-weight: 700; color: var(--text);
                margin: 16px 0 6px 0; padding-bottom: 4px;
@@ -1094,6 +1099,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="tab" data-tab="lc">리틀컵</div>
         <div class="tab" data-tab="cups">컵 시즌</div>
         <div class="tab" data-tab="transfer">박사 송출</div>
+        <div class="tab" data-tab="calcy">📥 Calcy 분석</div>
         <div class="tab" data-tab="search">검색</div>
       </div>
     </div>
@@ -1993,6 +1999,353 @@ function renderFieldTopGlance() {
   return html;
 }
 
+// ━━━━━━ 📥 Calcy IV CSV 일괄 분석 ━━━━━━
+const NAME_INDEX = (() => {
+  const idx = {};
+  const add = (key, sid) => {
+    const k = key.toLowerCase().trim();
+    if (k && !idx[k]) idx[k] = sid;
+  };
+  for (const sp of Object.values(DATA.species)) {
+    add(sp.ko, sp.id);
+    add(sp.en, sp.id);
+    add(sp.id, sp.id);
+    // 폼 괄호 제거 버전 (베이스 매칭용)
+    const koBase = sp.ko.replace(/\s*\([^)]*\)/g, '').trim();
+    const enBase = sp.en.replace(/\s*\([^)]*\)/g, '').trim();
+    add(koBase, sp.id);
+    add(enBase, sp.id);
+    // 진화 사슬 멤버 — 중간 단계 이름으로도 매칭
+    for (const k of (sp.chain_ko || [])) {
+      const kBase = k.replace(/\s*\([^)]*\)/g, '').trim();
+      add(kBase, sp.id);
+    }
+    for (const e of (sp.chain_en || [])) {
+      const eBase = e.replace(/\s*\([^)]*\)/g, '').trim();
+      add(eBase, sp.id);
+    }
+  }
+  return idx;
+})();
+
+const FORM_SUFFIX = {
+  shadow: '_shadow', mega: '_mega', 'mega x': '_mega_x', 'mega y': '_mega_y',
+  alolan: '_alolan', galarian: '_galarian', hisuian: '_hisuian', paldean: '_paldean',
+  origin: '_origin', altered: '_altered', therian: '_therian', incarnate: '_incarnate',
+  primal: '_primal', '쉐도우': '_shadow', '메가': '_mega', '메가 x': '_mega_x',
+  '메가 y': '_mega_y', '알로라': '_alolan', '가라르': '_galarian',
+};
+
+function matchSpecies(name, form, isShadow) {
+  if (!name) return null;
+  const cleanName = name.replace(/\s*\([^)]*\)/g, '').trim();
+  // 1: name 자체로
+  let baseId = NAME_INDEX[name.toLowerCase().trim()] || NAME_INDEX[cleanName.toLowerCase()];
+  if (!baseId) return null;
+  // 2: form 적용
+  const formKey = (form || '').toLowerCase().trim();
+  let suffix = FORM_SUFFIX[formKey] || '';
+  if (isShadow && !suffix) suffix = '_shadow';
+  if (suffix) {
+    // 베이스에서 기존 suffix 떼고 새 suffix 적용
+    const base = baseId.replace(/_(mega(_[xyz])?|primal|shadow|alolan|galarian|hisuian|paldean|origin|altered|therian|incarnate)$/, '');
+    const variant = base + suffix;
+    if (DATA.species[variant]) return variant;
+  }
+  return baseId;
+}
+
+function maxLevelForCP(sp, ivA, ivD, ivS, cpCap) {
+  if (!sp.base_stats) return null;
+  for (let i = DATA.cpm.length - 1; i >= 0; i--) {
+    const cpm = DATA.cpm[i];
+    const a = (sp.base_stats.atk + ivA) * cpm;
+    const d = (sp.base_stats.def + ivD) * cpm;
+    const s = (sp.base_stats.hp + ivS) * cpm;
+    const cp = Math.max(10, Math.floor(a * Math.sqrt(d) * Math.sqrt(s) / 10));
+    if (cp <= cpCap) {
+      return { level: 1 + i * 0.5, cp, sp: a * d * Math.floor(s) };
+    }
+  }
+  return null;
+}
+
+function leagueScore(sp, leagueIV, ivA, ivD, ivS, cpCap) {
+  // 사용자 IV 의 SP / 그 종의 rank-1 IV SP × 100
+  if (!leagueIV) return null;
+  const userMax = maxLevelForCP(sp, ivA, ivD, ivS, cpCap);
+  const r1Max = maxLevelForCP(sp, leagueIV.atk, leagueIV.def, leagueIV.sta, cpCap);
+  if (!userMax || !r1Max || !r1Max.sp) return null;
+  return {
+    pct: (userMax.sp / r1Max.sp * 100),
+    cp: userMax.cp,
+    level: userMax.level,
+  };
+}
+
+function analyzeOne(sp, ivA, ivD, ivS, level, isLucky) {
+  if (!sp) return null;
+  // 1) 풀강 SP / 100% Lv50 SP
+  const userSP = statProductAt(sp, ivA, ivD, ivS, level);
+  const userPct = sp.max_sp ? userSP / sp.max_sp * 100 : 0;
+
+  // 2) 리그별 점수 (SP 기준 rank-1 대비 %)
+  const glScore = sp.rank1_iv?.GL ? leagueScore(sp, sp.rank1_iv.GL, ivA, ivD, ivS, 1500) : null;
+  const ulScore = sp.rank1_iv?.UL ? leagueScore(sp, sp.rank1_iv.UL, ivA, ivD, ivS, 2500) : null;
+  const lcScore = sp.rank1_iv?.Little ? leagueScore(sp, sp.rank1_iv.Little, ivA, ivD, ivS, 500) : null;
+
+  // 3) 역할
+  const ml = bestRankIn(sp, ML_KEYS);
+  const gl = bestRankIn(sp, GL_KEYS);
+  const ul = bestRankIn(sp, UL_KEYS);
+  const lc = bestRankIn(sp, LC_KEYS);
+  const raid = bestRaidRank(sp);
+  const cups = sp.pvp.filter(p =>
+    !GL_KEYS.has(p.league_key) && !UL_KEYS.has(p.league_key) &&
+    !ML_KEYS.has(p.league_key) && !LC_KEYS.has(p.league_key)
+  ).sort((a,b) => a.rank - b.rank);
+
+  // 4) 판단 — 우선순위 높은 것부터
+  const decisions = [];
+  const isHundo = ivA === 15 && ivD === 15 && ivS === 15;
+  const ivSum = ivA + ivD + ivS;
+
+  // 마스터/레이드 — 최강일수록 좋음
+  if ((ml && ml.rank <= 15) || (raid && raid.is_essential_tier && raid.rank <= 8)) {
+    if (isHundo) decisions.push({pri:1, text:`🔴 마스터/레이드 풀강 (100%)`, why:`${ml?'ML#'+ml.rank:''}${raid?' / vs '+raid.boss_ko+'#'+raid.rank:''}`});
+    else if (ivSum >= 42) decisions.push({pri:2, text:`🟡 마스터/레이드 후보 (IV 좋음 ${ivSum}/45)`, why:'풀강 가치 있지만 100% 잡으면 교체'});
+    else if (ivSum >= 36) decisions.push({pri:3, text:`🔵 마스터/레이드 픽이지만 IV 부족 (${ivSum}/45)`, why:'더 좋은 거 잡으면 송출'});
+  }
+
+  // 슈퍼리그
+  if (gl && gl.rank <= 20 && glScore) {
+    if (glScore.pct >= 99) decisions.push({pri:1, text:`🔴 슈퍼리그 #${gl.rank} 거의 완벽 (${glScore.pct.toFixed(1)}%)`, why:`Lv${glScore.level} CP${glScore.cp}`});
+    else if (glScore.pct >= 96) decisions.push({pri:2, text:`🟡 슈퍼리그 #${gl.rank} 쓸만 (${glScore.pct.toFixed(1)}%)`, why:`Lv${glScore.level} CP${glScore.cp}`});
+    else if (glScore.pct >= 90) decisions.push({pri:3, text:`🔵 슈퍼리그 #${gl.rank} 부족 (${glScore.pct.toFixed(1)}%)`, why:'rank-1 IV 보다 약함'});
+  }
+
+  // 하이퍼리그
+  if (ul && ul.rank <= 20 && ulScore) {
+    if (ulScore.pct >= 99) decisions.push({pri:1, text:`🔴 하이퍼리그 #${ul.rank} 거의 완벽 (${ulScore.pct.toFixed(1)}%)`, why:`Lv${ulScore.level} CP${ulScore.cp}`});
+    else if (ulScore.pct >= 96) decisions.push({pri:2, text:`🟡 하이퍼리그 #${ul.rank} 쓸만 (${ulScore.pct.toFixed(1)}%)`, why:`Lv${ulScore.level} CP${ulScore.cp}`});
+  }
+
+  // 리틀컵
+  if (lc && lc.rank <= 15 && lcScore && lcScore.pct >= 96) {
+    decisions.push({pri:2, text:`🟡 리틀컵 #${lc.rank} (${lcScore.pct.toFixed(1)}%)`, why:`Lv${lcScore.level} CP${lcScore.cp}`});
+  }
+
+  // 컵 한정
+  if (cups.length && !decisions.length) {
+    const top = cups[0];
+    decisions.push({pri:3, text:`🔵 컵 한정 — ${top.league_ko}#${top.rank}`, why:'시즌 한정, 보관 권장'});
+  }
+
+  // 가족이 박사송출 / 메가 보관 그룹인지
+  const inMegaKeep = (DATA.mega_keep_groups||[]).some(g => g.members.some(m => m.sid === sp.id));
+  const inMegaPossible = (DATA.mega_possible_groups||[]).some(g => g.members.some(m => m.sid === sp.id));
+  const inTransfer = (DATA.transfer_groups||[]).some(g => g.members.some(m => m.sid === sp.id));
+
+  if (!decisions.length) {
+    if (sp.stronger_forms && sp.stronger_forms.length) {
+      decisions.push({pri:3, text:`🔵 더 강한 폼 우선`, why:'쉐도우/메가 가 핵심 — 베이스 1마리만 보관'});
+    } else if (inMegaKeep) {
+      decisions.push({pri:1, text:`🔴 메가 변신 베이스 — 100% IV 보관 필수`, why:'메가가 ranked'});
+    } else if (inMegaPossible) {
+      decisions.push({pri:2, text:`🟡 메가 가능 — 100% IV 1마리 보관`, why:'추후 메가 풀 추가 대비'});
+    } else if (inTransfer) {
+      decisions.push({pri:4, text:`⚪ 박사 송출 OK`, why:'어디에도 안 쓰임 (가족당 1마리만 보관)'});
+    } else {
+      decisions.push({pri:3, text:`🔵 랭킹 외 — 보관 OK`, why:'1마리만 보관 권장'});
+    }
+  }
+
+  // 럭키면 우선순위 +1단계 보관 권장
+  if (isLucky) {
+    decisions.push({pri:0, text:'🍀 Lucky', why:'반값 강화 — 보관 가치 +1'});
+  }
+
+  decisions.sort((a, b) => a.pri - b.pri);
+  return {
+    sid: sp.id,
+    ko: sp.ko, en: sp.en, dex: sp.dex, types: sp.types,
+    iv: {a:ivA, d:ivD, s:ivS}, level, isLucky,
+    sp_now: userSP, sp_pct: userPct,
+    decisions,
+    pri: decisions[0]?.pri || 99,
+  };
+}
+
+function parseCSV(text) {
+  const lines = text.replace(/﻿/g, '').trim().split(/\r?\n/);
+  if (!lines.length) return {headers:[], rows:[]};
+  const first = lines[0];
+  const delim = first.includes('\t') ? '\t' : (first.split(';').length > first.split(',').length ? ';' : ',');
+  const splitLine = (line) => {
+    // 쉼표 인용 처리
+    if (delim !== ',') return line.split(delim).map(c => c.trim());
+    const out = []; let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') inQ = !inQ;
+      else if (c === ',' && !inQ) { out.push(cur.trim()); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur.trim());
+    return out;
+  };
+  const headers = splitLine(first).map(h => h.replace(/^"|"$/g, ''));
+  const rows = lines.slice(1).filter(l => l.trim()).map(line =>
+    splitLine(line).map(c => c.replace(/^"|"$/g, ''))
+  );
+  return {headers, rows};
+}
+
+function findCol(headers, aliases) {
+  const lower = headers.map(h => h.toLowerCase().trim());
+  for (const a of aliases) {
+    const i = lower.indexOf(a.toLowerCase());
+    if (i >= 0) return i;
+  }
+  // 부분 매칭
+  for (let i = 0; i < lower.length; i++) {
+    for (const a of aliases) {
+      if (lower[i].includes(a.toLowerCase()) && lower[i].length < a.length + 4) return i;
+    }
+  }
+  return -1;
+}
+
+function detectColumns(headers) {
+  return {
+    name: findCol(headers, ['name', 'pokemon', 'species', '이름', '포켓몬', '몬스터']),
+    form: findCol(headers, ['form', '폼']),
+    cp: findCol(headers, ['cp']),
+    atk: findCol(headers, ['atk', 'attack', 'iv atk', '공격']),
+    def: findCol(headers, ['def', 'defense', 'defence', 'iv def', '방어']),
+    sta: findCol(headers, ['sta', 'stamina', 'iv sta', 'iv hp', '체력']),
+    level: findCol(headers, ['lvl', 'level', 'lv', '레벨']),
+    hp: findCol(headers, ['hp', 'health']),
+    shadow: findCol(headers, ['shadow', 'is shadow', '쉐도우']),
+    lucky: findCol(headers, ['lucky', 'is lucky', '럭키']),
+  };
+}
+
+function renderCalcy() {
+  let html = `<div class="iv-note" style="background:#e8f5e9;color:#186118">
+    <b>📥 Calcy IV CSV 일괄 분석</b><br>
+    Calcy IV 의 "Scan all" → "Export" → CSV 받아서 아래 붙여넣기/업로드.
+    1000마리도 즉시 분석 — 풀강·보관·송출 자동 분류.
+  </div>
+  <div class="card">
+    <input type="file" id="calcy-file" accept=".csv,.txt,.tsv" style="margin-bottom:8px">
+    <textarea id="calcy-text" placeholder="또는 CSV 텍스트 붙여넣기 (탭/쉼표 구분 모두 OK)"
+      style="width:100%;height:120px;font-family:monospace;font-size:11px;padding:8px;border:1px solid #d0d0d6;border-radius:6px"></textarea>
+    <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <button id="calcy-go" class="ctrl">분석 실행</button>
+      <select id="calcy-filter" class="ctrl">
+        <option value="">전부</option>
+        <option value="1">🔴 풀강 가치만</option>
+        <option value="2">🟡 권장만</option>
+        <option value="3">🔵 부족·컵한정만</option>
+        <option value="4">⚪ 박사 송출만</option>
+      </select>
+      <span id="calcy-summary" class="muted" style="margin-left:auto"></span>
+    </div>
+  </div>
+  <div id="calcy-result"></div>`;
+  return html;
+}
+
+let _calcyResults = null;
+
+document.addEventListener('change', e => {
+  if (e.target.id === 'calcy-file') {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => { document.getElementById('calcy-text').value = ev.target.result; };
+    reader.readAsText(f, 'utf-8');
+  }
+  if (e.target.id === 'calcy-filter') {
+    renderCalcyResults();
+  }
+});
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'calcy-go') runCalcy();
+});
+
+function runCalcy() {
+  const text = document.getElementById('calcy-text').value;
+  if (!text.trim()) { alert('CSV 내용 없음'); return; }
+  const {headers, rows} = parseCSV(text);
+  const cols = detectColumns(headers);
+  if (cols.name < 0 || cols.atk < 0 || cols.def < 0 || cols.sta < 0) {
+    alert('필요 컬럼 못 찾음 — Name/Atk/Def/Sta 컬럼 헤더 확인');
+    return;
+  }
+  const out = [];
+  let unmatched = 0;
+  for (const r of rows) {
+    const name = r[cols.name];
+    if (!name) continue;
+    const form = cols.form >= 0 ? r[cols.form] : '';
+    const isShadowCol = cols.shadow >= 0 ? r[cols.shadow] : '';
+    const isShadow = /^(yes|true|1|y|쉐도우)$/i.test(isShadowCol);
+    const sid = matchSpecies(name, form, isShadow);
+    if (!sid) { unmatched++; continue; }
+    const sp = DATA.species[sid];
+    if (!sp) { unmatched++; continue; }
+    const ivA = parseInt(r[cols.atk]);
+    const ivD = parseInt(r[cols.def]);
+    const ivS = parseInt(r[cols.sta]);
+    const lv = parseFloat(r[cols.level]) || 30;
+    const lucky = cols.lucky >= 0 && /^(yes|true|1|y|럭키)$/i.test(r[cols.lucky]);
+    if (isNaN(ivA) || isNaN(ivD) || isNaN(ivS)) continue;
+    const result = analyzeOne(sp, ivA, ivD, ivS, lv, lucky);
+    if (result) out.push(result);
+  }
+  _calcyResults = out;
+  document.getElementById('calcy-summary').textContent =
+    `총 ${out.length}마리 분석 (매칭 실패 ${unmatched})`;
+  renderCalcyResults();
+}
+
+function renderCalcyResults() {
+  if (!_calcyResults) return;
+  const filter = document.getElementById('calcy-filter')?.value || '';
+  let list = _calcyResults;
+  if (filter) list = list.filter(r => r.pri === parseInt(filter));
+  list = [...list].sort((a, b) => a.pri - b.pri || a.dex - b.dex);
+  const counts = {1:0, 2:0, 3:0, 4:0};
+  for (const r of _calcyResults) counts[r.pri] = (counts[r.pri] || 0) + 1;
+  let html = `<div class="stat">
+    🔴 ${counts[1]||0} · 🟡 ${counts[2]||0} · 🔵 ${counts[3]||0} · ⚪ ${counts[4]||0} —
+    필터: ${filter ? '['+filter+']' : '전부'} ${list.length}마리
+  </div>`;
+  html += `<table><thead><tr>
+    <th>Dex</th><th>포켓몬</th><th>속성</th><th>IV (공/방/체)</th><th>Lv</th><th>판단</th>
+  </tr></thead><tbody>`;
+  for (const r of list.slice(0, 500)) {
+    const sp = DATA.species[r.sid];
+    const decBlock = r.decisions.map(d =>
+      `<div><b>${d.text}</b><br><small class="muted">${d.why}</small></div>`
+    ).join('');
+    html += `<tr>
+      <td class="num">${String(r.dex).padStart(3,'0')}</td>
+      <td>${sp ? nameKo(sp) : r.ko}<br><span class="en">${r.en}</span>${r.isLucky?' 🍀':''}</td>
+      <td>${r.types.map(badge).join(' ')}</td>
+      <td class="num"><b>${r.iv.a}/${r.iv.d}/${r.iv.s}</b></td>
+      <td class="num">${r.level}</td>
+      <td>${decBlock}</td>
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  if (list.length > 500) html += `<div class="muted">+ ${list.length - 500} 더 있음 (필터 좁히세요)</div>`;
+  document.getElementById('calcy-result').innerHTML = html;
+}
+
 // ⭐ 필드 추천 — 18 속성 전부 한 화면에
 function renderFieldAll() {
   let html = `<div class="iv-note" style="background:#e8f5e9;color:#186118">
@@ -2319,6 +2672,7 @@ function render() {
   else if (state.tab === 'lc') html = renderLeagueTab('LC', '리틀컵 (Little)', LC_KEYS, {cap:25});
   else if (state.tab === 'cups') html = renderCups();
   else if (state.tab === 'transfer') html = renderTransfer();
+  else if (state.tab === 'calcy') html = renderCalcy();
   else if (state.tab === 'search') html = renderTriage();
   main.innerHTML = html;
   window.scrollTo(0, 0);
