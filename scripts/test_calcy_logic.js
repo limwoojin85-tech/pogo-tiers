@@ -40,7 +40,9 @@ function extract(name) {
   return mainJs.slice(start, i);
 }
 
-const need = ['statProductAt','maxLevelForCP','leagueScore','bestRankIn','bestRaidRank','analyzeOne','classifyBucket'];
+const need = ['statProductAt','maxLevelForCP','leagueScore','bestRankIn','bestRaidRank','analyzeOne','classifyBucket','buildUserTeams'];
+// 일부 함수가 _myTeams (전역 변수) 참조함
+global._myTeams = null;
 const code = need.map(n => extract(n)).filter(Boolean).join('\n\n');
 // eval 에서 함수 정의를 글로벌에 노출
 // 함수를 global 에 노출 — `function NAME(args){...}` → `global.NAME = function(args){...}`
@@ -48,7 +50,9 @@ const exposed = code.replace(/^function (\w+)\s*\(/gm, 'global.$1 = function (')
 eval(exposed);
 
 // CSV 파서
-const csvText = fs.readFileSync(path.join(ROOT, 'scripts', 'calcy_adb', 'history_merged.csv'), 'utf8');
+const csvPath = process.argv[2] || path.join(ROOT, 'scripts', 'calcy_adb', 'history_merged.csv');
+const csvText = fs.readFileSync(csvPath, 'utf8');
+console.log(`[csv] ${csvPath}`);
 const lines = csvText.replace(/﻿/g,'').split(/\r?\n/);
 function splitCsv(line) {
   const out = []; let cur=''; let q=false;
@@ -90,8 +94,9 @@ for (const gk of ['transfer_groups','mega_keep_groups','mega_possible_groups']) 
   }
 }
 
-let buckets = {}, total=0, unmatched=0;
-const sample = {};
+// 1차: 모든 row → result 배열
+const allResults = [];
+let unmatched=0;
 for (let i=1;i<lines.length;i++) {
   const line = lines[i]; if (!line.trim()) continue;
   const r = splitCsv(line);
@@ -110,19 +115,35 @@ for (let i=1;i<lines.length;i++) {
   if (!sp) { unmatched++; continue; }  // 가족 그룹 등은 스킵 (단순 통계 목적)
   const result = analyzeOne(sp, ivA, ivD, ivS, lv, lucky);
   if (!result) continue;
+  allResults.push(result);
+}
+
+// 2차: buildUserTeams → classifyBucket
+buildUserTeams(allResults);
+let buckets = {}, total=0;
+const sample = {};
+for (const result of allResults) {
   result.bucket = classifyBucket(result);
   buckets[result.bucket] = (buckets[result.bucket]||0)+1;
   total++;
   if (!sample[result.bucket]) sample[result.bucket] = [];
   if (sample[result.bucket].length < 3) {
-    sample[result.bucket].push(`${result.ko} ${ivA}/${ivD}/${ivS} → ${result.decisions[0].text}`);
+    sample[result.bucket].push(`${result.ko} ${result.iv.a}/${result.iv.d}/${result.iv.s} → ${result.decisions[0].text}`);
   }
 }
 
 console.log(`총 ${total} 분석 / ${unmatched} unmatched`);
 console.log();
 console.log('bucket 분포:');
-const order = ['hundo','gl_perfect','ul_perfect','cup_perfect','raid','pvp','mega','keep','cup','doubt','transfer'];
+const order = ['team_raid_current','team_raid_type','team_gl','team_ul','team_cups',
+               'cand_raid','cand_gl','cand_ul','cand_cup','hold','transfer'];
+console.log('\n=== _myTeams 요약 ===');
+console.log(`현재 레이드 보스: ${Object.keys(_myTeams.bossTeams).length}개`);
+console.log(`속성 (Top 6 있음): ${Object.values(_myTeams.byType).filter(l=>l.length).length}/18`);
+console.log(`슈퍼리그 베스트: ${_myTeams.leagueTeams.GL.length}마리`);
+console.log(`하이퍼리그 베스트: ${_myTeams.leagueTeams.UL.length}마리`);
+console.log(`컵 (3마리+ 모인): ${Object.keys(_myTeams.cupTeams).length}개`);
+console.log();
 for (const b of order) {
   if (!buckets[b]) continue;
   console.log(`  ${b.padEnd(14)} ${String(buckets[b]).padStart(4)}`);
