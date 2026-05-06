@@ -19,6 +19,7 @@ global.GL_KEYS = new Set(['all_1500', 'premier_1500', 'classic_1500']);
 global.UL_KEYS = new Set(['all_2500', 'premier_2500', 'classic_2500']);
 global.ML_KEYS = new Set(['all_10000', 'premier_10000', 'classic_10000']);
 global.LC_KEYS = new Set(['all_500', 'little_500', 'premier_500', 'classic_500']);
+global.ACTIVE_CUPS = new Set();
 
 // JS 안의 함수들이 DOM 의존이 좀 있어서 직접 실행은 위험.
 // 대신 핵심 함수만 추출해서 평가.

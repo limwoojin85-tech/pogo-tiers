@@ -1822,6 +1822,12 @@ const GL_KEYS = new Set(['all_1500','premier_1500','classic_1500']);
 const UL_KEYS = new Set(['all_2500','premier_2500','classic_2500']);
 const ML_KEYS = new Set(['all_10000','premier_10000','classic_10000']);
 const LC_KEYS = new Set(['all_500','little_500','premier_500','classic_500']);
+// 진행중 컵 — 시즌마다 갱신 (pvpoke 원본의 active 표시 없음 — 수동 관리)
+// 비어있으면 모든 컵 알파벳순. 진행중 컵은 사이트 상단 + 🔴 표시
+const ACTIVE_CUPS = new Set([
+  // 예: 'spellcraft_1500', 'maelstrom_1500', 'naic2026_1500'
+  // 시즌 갱신 시 여기 sid 추가
+]);
 
 function bestRankIn(sp, keys) {
   let best = null;
@@ -2514,7 +2520,7 @@ function runCalcy() {
 // 후보군 dedup — 같은 종 여러 마리면 (sid × bucket) 별 최고 1마리만 keep, 나머지 transfer
 // team_* 는 dedup 대상 아님 (이미 buildUserTeams 가 종당 1마리만 뽑음)
 function dedupeCandidates(results) {
-  const CAND_BUCKETS = new Set(['cand_raid', 'cand_gl', 'cand_ul', 'cand_cup', 'hold']);
+  const CAND_BUCKETS = new Set(['cand_raid', 'hold']);
   const bySid = {};
   for (const r of results) {
     if (!CAND_BUCKETS.has(r.bucket)) continue;
@@ -2578,15 +2584,20 @@ function buildUserTeams(results) {
                        boss_ko: bestForT?.boss_ko, score });
     }
   }
+  // byType: { team: top6, candidates: next 10 }
+  const byTypeOut = {};
   for (const t of Object.keys(byType)) {
     byType[t].sort((a, b) => a.score - b.score);
-    // 종 중복 제거 — 종당 1마리만
     const seen = new Set();
-    byType[t] = byType[t].filter(x => {
+    const uniq = byType[t].filter(x => {
       if (seen.has(x.r.sid)) return false;
       seen.add(x.r.sid); return true;
-    }).slice(0, 6);
+    });
+    byTypeOut[t] = { team: uniq.slice(0, 6), candidates: uniq.slice(6) };
   }
+  // 호환성을 위해 byType 도 (team 만) 기존 형식으로 노출
+  const byTypeFlat = {};
+  for (const t of Object.keys(byTypeOut)) byTypeFlat[t] = byTypeOut[t].team;
 
   // 2) 현재 활성 레이드 보스별 추천 팀
   const ESSENTIAL_TIERS = new Set(['T5','T5sh','Mega','MegaT5','UB','Elite']);
@@ -2610,11 +2621,14 @@ function buildUserTeams(results) {
       if (seen.has(x.r.sid)) return false;
       seen.add(x.r.sid); return true;
     });
-    if (uniq.length) bossTeams[bossKey] = { boss: b, team: uniq.slice(0, 6) };
+    if (uniq.length) bossTeams[bossKey] = {
+      boss: b, team: uniq.slice(0, 6),
+      candidates: uniq.slice(6),  // 다음 10마리 후보
+    };
   }
 
-  // 3) 슈퍼리그 / 하이퍼리그 박스 Top 6 (컵 IV 검증 포함)
-  const leagueTeams = { GL: [], UL: [] };
+  // 3) 슈퍼리그 / 하이퍼리그 박스 Top 6 + 후보 10마리 (컵 IV 검증 포함)
+  const leagueAccum = { GL: [], UL: [] };
   for (const r of results) {
     const sp = DATA.species[r.sid];
     if (!sp) continue;
@@ -2624,18 +2638,21 @@ function buildUserTeams(results) {
       const r1 = sp.rank1_iv?.[code];
       const score = r1 ? leagueScore(sp, r1, r.iv.a, r.iv.d, r.iv.s, cap) : null;
       const pct = score?.pct || 0;
-      if (pct < 90) continue;  // 풀강 못하는 IV 제외
-      leagueTeams[code].push({ r, leagueRank: best.rank, pct });
+      if (pct < 90) continue;
+      leagueAccum[code].push({ r, leagueRank: best.rank, pct });
     }
   }
-  for (const k of Object.keys(leagueTeams)) {
-    leagueTeams[k].sort((a, b) => (a.leagueRank - b.leagueRank) || (b.pct - a.pct));
+  const leagueTeams = { GL: [], UL: [] };
+  const leagueCandidates = { GL: [], UL: [] };
+  for (const k of Object.keys(leagueAccum)) {
+    leagueAccum[k].sort((a, b) => (a.leagueRank - b.leagueRank) || (b.pct - a.pct));
     const seen = new Set();
-    leagueTeams[k] = leagueTeams[k].filter(x => {
+    const uniq = leagueAccum[k].filter(x => {
       if (seen.has(x.r.sid)) return false;
-      seen.add(x.r.sid);
-      return true;
-    }).slice(0, 6);
+      seen.add(x.r.sid); return true;
+    });
+    leagueTeams[k] = uniq.slice(0, 6);
+    leagueCandidates[k] = uniq.slice(6);
   }
 
   // 4) 컵별 Top 6 (1500 캡 → glScore 로 IV 검증)
@@ -2662,11 +2679,14 @@ function buildUserTeams(results) {
     const ct = cupAccum[k];
     ct.list.sort((a,b) => (a.cupRank - b.cupRank) || (b.pct - a.pct));
     const seen = new Set();
-    ct.list = ct.list.filter(x => {
+    const uniq = ct.list.filter(x => {
       if (seen.has(x.r.sid)) return false;
       seen.add(x.r.sid); return true;
-    }).slice(0, 6);
-    if (ct.list.length >= 3) cupTeams[k] = ct;  // 박스에서 3마리 이상 모이는 컵만
+    });
+    ct.list = uniq.slice(0, 6);
+    ct.candidates = uniq.slice(6);
+    ct.is_active = ACTIVE_CUPS.has(k);
+    if (ct.list.length >= 3) cupTeams[k] = ct;
   }
 
   // 5) 보강 추천 — 각 역할의 메타 Top 10 중 박스에 없는 종
@@ -2749,7 +2769,11 @@ function buildUserTeams(results) {
     };
   }
 
-  _myTeams = { byType, bossTeams, leagueTeams, cupTeams, reinforcement };
+  _myTeams = {
+    byType: byTypeFlat,  // 기존 호환: 그냥 team list
+    byTypeFull: byTypeOut,  // {team, candidates}
+    bossTeams, leagueTeams, leagueCandidates, cupTeams, reinforcement,
+  };
 }
 
 // 가용한 leagueScore (analyze 가 쓰던 거) — 클로저 외부에 있어야 함
@@ -2765,66 +2789,63 @@ function bestRankInBox(sp, keys) {
 // 박스 정리 bucket 분류 — 팀 멤버십 우선, 그 다음 후보군 / 보류 / 송출
 // _myTeams 가 buildUserTeams 호출 후 채워져 있어야 함.
 function classifyBucket(r) {
-  // ─── 1순위: 베스트 6 팀에 들어간 경우
+  // ─── 1순위: 베스트 6 팀 OR 후보 (각 team 화면 안에서 같이 보임)
   if (_myTeams) {
+    // 현재 레이드 — 베스트 6 + 후보
     for (const bt of Object.values(_myTeams.bossTeams || {})) {
       if (bt.team.some(m => m.r === r)) return 'team_raid_current';
+      if ((bt.candidates || []).some(m => m.r === r)) return 'team_raid_current';
     }
+    // 슈퍼리그
     if ((_myTeams.leagueTeams.GL || []).some(m => m.r === r)) return 'team_gl';
+    if ((_myTeams.leagueCandidates?.GL || []).some(m => m.r === r)) return 'team_gl';
+    // 하이퍼리그
     if ((_myTeams.leagueTeams.UL || []).some(m => m.r === r)) return 'team_ul';
+    if ((_myTeams.leagueCandidates?.UL || []).some(m => m.r === r)) return 'team_ul';
+    // 컵 — 베스트 6 + 후보
     for (const ct of Object.values(_myTeams.cupTeams || {})) {
       if (ct.list.some(m => m.r === r)) return 'team_cups';
+      if ((ct.candidates || []).some(m => m.r === r)) return 'team_cups';
     }
-    for (const arr of Object.values(_myTeams.byType || {})) {
-      if (arr.some(m => m.r === r)) return 'team_raid_type';
+    // 속성별 — 베스트 6 + 후보
+    for (const full of Object.values(_myTeams.byTypeFull || {})) {
+      if ((full.team || []).some(m => m.r === r)) return 'team_raid_type';
+      if ((full.candidates || []).some(m => m.r === r)) return 'team_raid_type';
     }
   }
 
-  // ─── 2순위: 후보군 — decision 별로 검사 (전체 allTxt 합치면 .* 가 다른 decision 까지 매칭함)
+  // ─── 2순위: 분리된 후보군 (cand_gl/ul/cup 제거 — 베스트 6 화면에 후보 통합됨)
+  // 베스트 6 못 들었지만 박스에서 백개체/ATK 15 강자는 cand_raid (현재 보스에 매치 안 되는 백개체)
   const decTexts = r.decisions.map(d => d.text || '');
   const anyDec = (re) => decTexts.some(t => re.test(t));
 
-  // 컵 못 씀 (1500 캡 풀강 불가) → 송출
   if (anyDec(/컵 못 씀/)) return 'transfer';
 
-  // 백개체 / ATK 15 강자 → 레이드 후보군
   if (r.iv.a === 15 && r.iv.d === 15 && r.iv.s === 15) return 'cand_raid';
-  if (anyDec(/마스터\/레이드 풀강|레이드 최적|레이드 강|레이드 가능|메가 변신 베이스/)) return 'cand_raid';
-
-  // 리그 후보군 — decision 안에서 (긍정 신호 AND 부족 아님)
-  if (anyDec(/슈퍼리그.*(거의 완벽|쓸만)/)) return 'cand_gl';
-  if (anyDec(/하이퍼리그.*(거의 완벽|쓸만)/)) return 'cand_ul';
-
-  // 컵 후보군 — 컵 종결/한정/후보 (90%+)
-  if (anyDec(/컵 종결|컵 한정|컵 후보/)) return 'cand_cup';
+  if (anyDec(/마스터\/레이드 풀강|레이드 최적/)) return 'cand_raid';
 
   // ─── 3순위: 보류 — 메가 / 가족 대표
   if (anyDec(/메가 가능|메가 보관|가족 대표/)) return 'hold';
 
-  // ─── 4순위: 송출 (그 외 모두 — IV 부족, 랭킹 외, 송출 OK 등)
+  // ─── 4순위: 송출 (그 외 모두 — 슈퍼/하이퍼/컵 후보들도 베스트 6 화면 안에서만 표시됨)
   return 'transfer';
 }
 
 const BUCKET_INFO = {
-  // ─── 베스트 6 — 키울 6마리 (자동 선발)
-  team_raid_current: { label: '🏟️ 현재 레이드 베스트 6', desc: '활성 레이드 보스별로 박스에서 자동 선발' },
-  team_raid_type:    { label: '🌈 속성별 레이드 Top 6',  desc: '18 속성별 박스 기준 어태커 Top 6' },
-  team_gl:           { label: '⚔️ 슈퍼리그 베스트 6',    desc: '1500 캡 — 박스 Top 6 (종 중복 제거)' },
-  team_ul:           { label: '🛡️ 하이퍼리그 베스트 6', desc: '2500 캡 — 박스 Top 6 (종 중복 제거)' },
-  team_cups:         { label: '🥊 각종 컵 베스트 6',     desc: '컵별 박스 Top 6 (3마리 이상 모이는 컵만)' },
-  // ─── 후보군 — 베스트 못 들었지만 버리기 아까운 백업
-  cand_raid: { label: '⚔️ 레이드용 후보군', desc: '백개체 / ATK 15 강자 / 메가 베이스 — 백업' },
-  cand_gl:   { label: '🛡️ 슈퍼리그 후보군', desc: 'GL Top 30 + IV 적합 — 베스트 6 외 백업' },
-  cand_ul:   { label: '🛡️ 하이퍼리그 후보군', desc: 'UL Top 30 + IV 적합 — 베스트 6 외 백업' },
-  cand_cup:  { label: '🥊 컵 후보군',         desc: '컵 종결 / 컵 한정 — 컵 베스트 외 백업' },
-  // ─── 결정
-  hold:     { label: '🤔 보류',     desc: '가족 대표 / 메가 변신 대비' },
-  transfer: { label: '📦 박사 송출', desc: '바로 보내도 OK' },
+  // ─── 베스트 6 — 키울 6마리 + 후보 + 메타 보강 (한 화면에)
+  team_raid_current: { label: '🏟️ 현재 레이드 베스트 6', desc: '보스별: 베스트 6 + 후보 10 + 보강 추천' },
+  team_raid_type:    { label: '🌈 속성별 레이드 Top 6',  desc: '18 속성별: 베스트 6 + 후보 (한 줄)' },
+  team_gl:           { label: '⚔️ 슈퍼리그 베스트 6',    desc: '1500 캡: 베스트 6 + 후보 + 메타 보강' },
+  team_ul:           { label: '🛡️ 하이퍼리그 베스트 6', desc: '2500 캡: 베스트 6 + 후보 + 메타 보강' },
+  team_cups:         { label: '🥊 각종 컵 베스트 6',     desc: '컵별: 진행중 컵 상단, 베스트 6 + 후보' },
+  // ─── 그 외
+  cand_raid: { label: '⚔️ 레이드 백개체·ATK15', desc: '현재 보스에 안 맞는 백개체/ATK15 강자' },
+  hold:      { label: '🤔 보류',                 desc: '가족 대표 / 메가 변신 대비' },
+  transfer:  { label: '📦 박사 송출',             desc: '바로 보내도 OK' },
 };
 const BUCKET_ORDER = [
   'team_raid_current', 'team_raid_type', 'team_gl', 'team_ul', 'team_cups',
-  'cand_raid', 'cand_gl', 'cand_ul', 'cand_cup',
-  'hold', 'transfer',
+  'cand_raid', 'hold', 'transfer',
 ];
 
 function exportFilteredCSV() {
@@ -2932,6 +2953,20 @@ function renderCalcyResults() {
   document.getElementById('calcy-result').innerHTML = html;
 }
 
+// ─── 후보 테이블 헬퍼 — 베스트 6 다음 10마리
+function _candidatesTable(candidates, extraCols, extraHeader) {
+  if (!candidates || !candidates.length) return '';
+  let html = `<div style="margin-top:8px"><b>📋 후보 (베스트 6 다음 ${candidates.length}마리)</b></div>`;
+  html += `<table style="margin-top:4px"><thead><tr>
+    <th>#</th><th>포켓몬</th><th>속성</th><th>IV</th>${extraHeader}
+  </tr></thead><tbody>`;
+  candidates.forEach((m, i) => {
+    html += _teamRow(m, 5 + i, extraCols);  // 7위부터
+  });
+  html += `</tbody></table>`;
+  return html;
+}
+
 // ─── 보강 섹션 헬퍼 — 메타 Top N 중 박스에 없는 종
 function _reinforcementBox(meta, missing, role) {
   if (!meta || !meta.length) return '';
@@ -2987,6 +3022,8 @@ function renderTeamRaidCurrent() {
       html += _teamRow(m, i, mm => `<td class="num">#${mm.raidRank}</td>`);
     });
     html += `</tbody></table>`;
+    // 후보 (다음 10마리)
+    html += _candidatesTable(bt.candidates, mm => `<td class="num">#${mm.raidRank}</td>`, '<th>랭크</th>');
     // 보강 — 박스에 없는 카운터 메타
     const ri = _myTeams.reinforcement?.bosses?.[Object.keys(_myTeams.bossTeams).find(k => _myTeams.bossTeams[k] === bt)];
     if (ri) html += _reinforcementBox(ri.meta, ri.missing, `vs ${b.boss_ko}`);
@@ -3002,17 +3039,23 @@ function renderTeamRaidType() {
   let html = `<div class="iv-note">${BUCKET_INFO.team_raid_type.label} — ${BUCKET_INFO.team_raid_type.desc}</div>`;
   html += `<table><thead><tr><th>속성</th><th>1위</th><th>2위</th><th>3위</th><th>4위</th><th>5위</th><th>6위</th></tr></thead><tbody>`;
   for (const t of TYPES) {
-    const list = _myTeams.byType[t];
-    if (!list || !list.length) continue;
+    const full = _myTeams.byTypeFull?.[t];
+    if (!full || !full.team || !full.team.length) continue;
     html += `<tr><td><b>${badge(t)} ${TYPES_KO[t]||t}</b></td>`;
     for (let i = 0; i < 6; i++) {
-      const m = list[i];
+      const m = full.team[i];
       if (!m) { html += '<td class="muted">—</td>'; continue; }
       html += `<td><b>${m.r.ko}</b><br>
         <small><span class="muted">${m.r.iv.a}/${m.r.iv.d}/${m.r.iv.s}</span>
         ${m.boss_ko ? `<br>vs ${m.boss_ko} #${m.raidRank}` : ''}</small></td>`;
     }
-    html += '</tr>';
+    // 후보 (다음 10마리) — 속성별 매트릭스 한 줄에 압축 표시
+    if (full.candidates && full.candidates.length) {
+      html += `<tr style="background:#fafafa"><td><small class="muted">↳ 후보</small></td><td colspan="6"><small>`;
+      html += full.candidates.slice(0, 10).map(m =>
+        `<span class="ovl ovl-cup" style="margin:1px">${m.r.ko} <span class="muted">${m.r.iv.a}/${m.r.iv.d}/${m.r.iv.s}</span></span>`).join(' ');
+      html += `</small></td></tr>`;
+    }
   }
   html += '</tbody></table>';
   // 속성별 보강 — 박스에 없는 메타 어태커
@@ -3051,28 +3094,44 @@ function renderTeamLeague(code) {
     html += _teamRow(m, i, mm => `<td class="num">#${mm.leagueRank}</td><td class="num">${mm.pct.toFixed(1)}%</td>`);
   });
   html += `</tbody></table>`;
+  // 후보 (다음 10마리)
+  const cands = _myTeams.leagueCandidates?.[code] || [];
+  html += _candidatesTable(cands,
+    mm => `<td class="num">#${mm.leagueRank}</td><td class="num">${mm.pct.toFixed(1)}%</td>`,
+    '<th>리그 #</th><th>매칭 %</th>');
   // 보강
   const ri = _myTeams.reinforcement?.[code === 'GL' ? 'team_gl' : 'team_ul'];
   if (ri) html += _reinforcementBox(ri.meta, ri.missing, lbl);
   return html;
 }
 
-// 🥊 각종 컵 베스트 6 — 컵별로 펼침
+// 🥊 각종 컵 베스트 6 — 컵별로 펼침. 진행중 컵 상단 + 🔴 표시
 function renderTeamCups() {
   if (!_myTeams) return '<div class="empty">데이터 없음</div>';
   const cups = _myTeams.cupTeams || {};
-  const keys = Object.keys(cups).sort((a,b) =>
-    (cups[b].list.length - cups[a].list.length) || cups[a].league_ko.localeCompare(cups[b].league_ko, 'ko'));
+  const keys = Object.keys(cups).sort((a, b) => {
+    // 진행중 우선
+    if (cups[a].is_active && !cups[b].is_active) return -1;
+    if (!cups[a].is_active && cups[b].is_active) return 1;
+    // 그 다음 박스 후보 많은 순 → 한글 가나다
+    return (cups[b].list.length - cups[a].list.length)
+        || cups[a].league_ko.localeCompare(cups[b].league_ko, 'ko');
+  });
   let html = `<div class="iv-note">${BUCKET_INFO.team_cups.label} — ${BUCKET_INFO.team_cups.desc}</div>`;
   if (!keys.length) return html + '<div class="empty">박스에 어느 컵도 3마리 이상 모이지 않음</div>';
   for (const k of keys) {
     const ct = cups[k];
-    html += `<h3 style="margin:14px 0 4px">🥊 ${ct.league_ko} <span class="en">(${ct.league_en})</span> <span class="muted">— ${ct.list.length}마리</span></h3>`;
+    const activeBadge = ct.is_active ? '🔴 <b style="color:#d33">진행중</b> ' : '';
+    html += `<h3 style="margin:14px 0 4px">${activeBadge}🥊 ${ct.league_ko} <span class="en">(${ct.league_en})</span> <span class="muted">— ${ct.list.length}마리</span></h3>`;
     html += `<table><thead><tr><th>#</th><th>포켓몬</th><th>속성</th><th>IV</th><th>컵 #</th><th>매칭 %</th></tr></thead><tbody>`;
     ct.list.forEach((m, i) => {
       html += _teamRow(m, i, mm => `<td class="num">#${mm.cupRank}</td><td class="num">${mm.pct.toFixed(1)}%</td>`);
     });
     html += `</tbody></table>`;
+    // 후보 (다음 10마리)
+    html += _candidatesTable(ct.candidates,
+      mm => `<td class="num">#${mm.cupRank}</td><td class="num">${mm.pct.toFixed(1)}%</td>`,
+      '<th>컵 #</th><th>매칭 %</th>');
     // 컵별 보강
     const ri = _myTeams.reinforcement?.cups?.[k];
     if (ri) html += _reinforcementBox(ri.meta, ri.missing, ct.league_ko);
