@@ -1117,6 +1117,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="tab" data-tab="fieldtop">한눈에</div>
         <div class="tab" data-tab="field">⭐ 필드 추천</div>
         <div class="tab" data-tab="raids">레이드</div>
+        <div class="tab" data-tab="maxbattle">💎 맥스 배틀</div>
         <div class="tab" data-tab="gl">슈퍼리그</div>
         <div class="tab" data-tab="ul">하이퍼리그</div>
         <div class="tab" data-tab="ml">마스터리그</div>
@@ -2189,6 +2190,12 @@ function analyzeOne(sp, ivA, ivD, ivS, level, isLucky) {
   // 1) 풀강 SP / 100% Lv50 SP
   const userSP = statProductAt(sp, ivA, ivD, ivS, level);
   const userPct = sp.max_sp ? userSP / sp.max_sp * 100 : 0;
+  // 미진화 종 — 최종 진화명 찾아서 안내
+  const isNotFinal = sp.is_final === false;
+  let finalKo = null;
+  if (isNotFinal && sp.chain_ko && sp.chain_ko.length) {
+    finalKo = sp.chain_ko[sp.chain_ko.length - 1];
+  }
 
   // 2) 리그별 점수 (SP 기준 rank-1 대비 %)
   const glScore = sp.rank1_iv?.GL ? leagueScore(sp, sp.rank1_iv.GL, ivA, ivD, ivS, 1500) : null;
@@ -2301,6 +2308,12 @@ function analyzeOne(sp, ivA, ivD, ivS, level, isLucky) {
   const inMegaKeep = (DATA.mega_keep_groups||[]).some(g => g.members.some(m => m.sid === sp.id));
   const inMegaPossible = (DATA.mega_possible_groups||[]).some(g => g.members.some(m => m.sid === sp.id));
   const inTransfer = (DATA.transfer_groups||[]).some(g => g.members.some(m => m.sid === sp.id));
+
+  // 미진화 종 — 항상 진화 안내 (팀 빌더에서 빠짐)
+  if (isNotFinal && finalKo) {
+    decisions.push({pri:3, text:`🔄 진화 필요 — ${finalKo} 로 진화시켜 사용`,
+                    why:'미진화 상태로는 팀 빌더 X — 진화 후 평가'});
+  }
 
   if (!decisions.length) {
     if (sp.stronger_forms && sp.stronger_forms.length) {
@@ -2609,7 +2622,10 @@ function buildUserTeams(results) {
   for (const t of Object.keys(byTypeOut)) byTypeFlat[t] = byTypeOut[t].team;
 
   // 2) 현재 활성 레이드 보스별 추천 팀
-  const ESSENTIAL_TIERS = new Set(['T5','T5sh','Mega','MegaT5','UB','Elite']);
+  const ESSENTIAL_TIERS = new Set([
+    'T5','T5sh','Mega','MegaT5','UB','Elite',
+    'Dmax5','Dmax4','Dmax3','Gmax','GmaxX',  // 맥스 배틀 — 활성 보스
+  ]);
   const bossTeams = {};  // boss_key → list
   for (const [bossKey, b] of Object.entries(DATA.bosses)) {
     if (!ESSENTIAL_TIERS.has(b.tier_en)) continue;  // 현재만
@@ -2835,17 +2851,20 @@ function classifyBucket(r) {
   const decTexts = r.decisions.map(d => d.text || '');
   const anyDec = (re) => decTexts.some(t => re.test(t));
 
-  if (anyDec(/컵 못 씀/)) return 'transfer';
+  // 분명한 송출 신호
+  if (anyDec(/컵 못 씀|중복 송출|송출 OK/)) return 'transfer';
 
   // 백개체 — 메타 역할 있을 때만 cand_raid, 없으면 hold (콜렉션)
   if (r.iv.a === 15 && r.iv.d === 15 && r.iv.s === 15) {
     if (anyDec(/백개체 — ML 종결|백개체 — 레이드 종결/)) return 'cand_raid';
-    return 'hold';  // 콜렉션 / 메가 변신용
+    return 'hold';
   }
   if (anyDec(/마스터\/레이드 풀강|레이드 최적/)) return 'cand_raid';
 
-  // ─── 3순위: 보류 — 메가 / 가족 대표
-  if (anyDec(/메가 가능|메가 보관|가족 대표|백개체 — 메가|백개체.*콜렉션/)) return 'hold';
+  // ─── 3순위: 보류 — 메가 / 가족 대표 / 진화 필요 / 애매한 개체값 (🔵)
+  if (anyDec(/진화 필요|메가 가능|메가 보관|가족 대표|백개체 — 메가|백개체.*콜렉션|더 강한 폼/)) return 'hold';
+  // 🔵 = 애매한 IV (부족·랭킹외·후보 등) — 송출 대신 일단 보류
+  if (anyDec(/🔵|부족|랭킹 외|컵 후보|레이드 보조/)) return 'hold';
 
   // ─── 4순위: 송출 (그 외 모두 — 슈퍼/하이퍼/컵 후보들도 베스트 6 화면 안에서만 표시됨)
   return 'transfer';
@@ -3705,6 +3724,67 @@ function renderRaidsView() {
   return `<div class="stat">${total} 보스</div>` + html;
 }
 
+// 💎 맥스 배틀 (Dynamax/Gigantamax) — 별도 탭
+function renderMaxBattle() {
+  const MAX_TIERS = new Set(['Gmax','GmaxX','Dmax5','Dmax4','Dmax3','Dmax2','Dmax1',
+                              'Gmax*','GmaxX*','Dmax5*','Dmax4*','Dmax3*','Dmax2*','Dmax1*']);
+  const tierOrder = ['Gmax','GmaxX','Dmax5','Dmax4','Dmax3','Dmax2','Dmax1',
+                     'Gmax*','GmaxX*','Dmax5*','Dmax4*','Dmax3*'];
+  const titles = {
+    Gmax:'거다이맥스 (현재)', GmaxX:'거다이맥스 특수 (현재)',
+    Dmax5:'다이맥스 5성 (현재)', Dmax4:'다이맥스 4성 (현재)', Dmax3:'다이맥스 3성 (현재)',
+    Dmax2:'다이맥스 2성 (현재)', Dmax1:'다이맥스 1성 (현재)',
+    'Gmax*':'예정 거다이맥스', 'GmaxX*':'예정 거다이맥스 특수',
+    'Dmax5*':'예정 다이맥스 5성', 'Dmax4*':'예정 다이맥스 4성', 'Dmax3*':'예정 다이맥스 3성',
+  };
+  const grouped = {};
+  for (const b of Object.values(DATA.bosses)) {
+    if (!MAX_TIERS.has(b.tier_en)) continue;
+    if (state.typeFilter && !b.boss_types.includes(state.typeFilter)) continue;
+    if (state.q && !b._search.includes(state.q)) continue;
+    if (!grouped[b.tier_en]) grouped[b.tier_en] = [];
+    grouped[b.tier_en].push(b);
+  }
+  let total = 0;
+  let html = `<div class="iv-note" style="background:#fce4ec;color:#880e4f">
+    <b>💎 맥스 배틀 (Dynamax / Gigantamax)</b><br>
+    일반 레이드와 분리. 카운터는 다이맥스/거다이맥스 가능 종 위주.
+    배틀 메커니즘 다름 (3턴 배틀 + 변신 게이지).
+  </div>`;
+  for (const tier of tierOrder) {
+    const list = grouped[tier];
+    if (!list || !list.length) continue;
+    list.sort((a,b) => (a.boss_dex||9999) - (b.boss_dex||9999));
+    total += list.length;
+    html += `<div class="section-h">${titles[tier]||tier} (${list.length})</div>`;
+    for (const b of list) {
+      const dex = b.boss_dex && b.boss_dex < 9999 ?
+                  `<span class="dex">#${String(b.boss_dex).padStart(3,'0')}</span> ` : '';
+      html += `<div class="boss-head">
+        <h3>${dex}${b.boss_ko} <span class="en">/ ${b.boss_en}</span></h3>
+        <span>${b.boss_types.map(badge).join(' ')}</span>
+        <span class="weak">약점: ${multBadges(b.boss_weak)||'없음'}</span>
+      </div>
+      <table><thead><tr><th>#</th><th>Dex</th><th>카운터</th><th>속성</th><th>추천 기술</th><th>비고</th></tr></thead>
+        <tbody>${b.counters.map(c => {
+          const sp = DATA.species[c.sid];
+          const types = sp ? sp.types.map(badge).join(' ') : '';
+          const note = sp ? extraInfoBadges(sp, 'Raid') : '';
+          return `<tr>
+            <td class="rank">${c.rank}</td>
+            <td class="num">${sp ? String(sp.dex).padStart(3,'0') : ''}</td>
+            <td>${sp ? nameKo(sp) : c.ko}<br><span class="en">${c.en}</span></td>
+            <td>${types}</td>
+            <td>${moveSplitHtml(c.fast_ko, c.fast_en, c.charged_ko, c.charged_en)}</td>
+            <td>${note}</td>
+          </tr>`;
+        }).join('')}</tbody></table>`;
+    }
+  }
+  if (!total) return html + `<div class="empty">현재 활성 맥스 배틀 보스 없음</div>`;
+  return `<div class="stat">${total} 맥스 보스</div>` + html;
+}
+
 // "비고" 컬럼 — 다른 등장처 모두 (컵 포함, 풀로 표시)
 function extraInfoBadges(sp, exceptCtx) {
   const out = [];
@@ -3809,6 +3889,7 @@ function render() {
   else if (state.tab === 'ul') html = renderLeagueTab('UL', '하이퍼리그 (Ultra League)', UL_KEYS, {cap:30});
   else if (state.tab === 'ml') html = renderLeagueTab('ML', '마스터리그 (Master League)', ML_KEYS, {cap:30});
   else if (state.tab === 'raids') html = renderRaidsView();
+  else if (state.tab === 'maxbattle') html = renderMaxBattle();
   else if (state.tab === 'lc') html = renderLeagueTab('LC', '리틀컵 (Little)', LC_KEYS, {cap:25});
   else if (state.tab === 'cups') html = renderCups();
   else if (state.tab === 'transfer') html = renderTransfer();
