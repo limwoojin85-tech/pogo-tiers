@@ -1043,6 +1043,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 font-weight: 600; }
   button.ctrl:hover { background: #1d6bd6; }
   textarea { font-family: 'Consolas', 'Menlo', monospace; }
+  .bucket-bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+  .bucket-btn { padding: 6px 12px; font-size: 13px; border: 1px solid #d0d0d6;
+                background: #fff; color: var(--text); border-radius: 6px;
+                cursor: pointer; font-weight: 600; }
+  .bucket-btn:hover { background: #f0f0f3; }
+  .bucket-btn.on { background: #1d1d1f; color: #fff; border-color: #1d1d1f; }
+  .bucket-btn.export-btn { margin-left: auto; background: var(--accent); color: #fff; }
+  .bucket-btn.export-btn:hover { background: #1d6bd6; }
 
   .section-h { font-size: 13px; font-weight: 700; color: var(--text);
                margin: 16px 0 6px 0; padding-bottom: 4px;
@@ -2339,31 +2347,26 @@ function detectColumns(headers) {
 
 function renderCalcy() {
   let html = `<div class="iv-note" style="background:#e8f5e9;color:#186118">
-    <b>📥 Calcy IV CSV 일괄 분석</b><br>
-    Calcy IV 의 "Scan all" → "Export" → CSV 받아서 아래 붙여넣기/업로드.
-    1000마리도 즉시 분석 — 풀강·보관·송출 자동 분류.
+    <b>📥 Calcy IV CSV 박스 정리</b><br>
+    Calcy IV 의 "Scan all" → CSV → 업로드 → 박스 자동 분류:<br>
+    🏆 종결 / ⚔️ 레이드용 / 🛡️ PvP용 / 🛡️ 메가 보관 / 🔄 컵 한정 / 📦 송출 / 🤔 고민
   </div>
   <div class="card">
     <input type="file" id="calcy-file" accept=".csv,.txt,.tsv" style="margin-bottom:8px">
-    <textarea id="calcy-text" placeholder="또는 CSV 텍스트 붙여넣기 (탭/쉼표 구분 모두 OK)"
-      style="width:100%;height:120px;font-family:monospace;font-size:11px;padding:8px;border:1px solid #d0d0d6;border-radius:6px"></textarea>
+    <textarea id="calcy-text" placeholder="또는 CSV 텍스트 붙여넣기"
+      style="width:100%;height:100px;font-family:monospace;font-size:11px;padding:8px;border:1px solid #d0d0d6;border-radius:6px"></textarea>
     <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
       <button id="calcy-go" class="ctrl">분석 실행</button>
-      <select id="calcy-filter" class="ctrl">
-        <option value="">전부</option>
-        <option value="1">🔴 풀강 가치만</option>
-        <option value="2">🟡 권장만</option>
-        <option value="3">🔵 부족·컵한정만</option>
-        <option value="4">⚪ 박사 송출만</option>
-      </select>
       <span id="calcy-summary" class="muted" style="margin-left:auto"></span>
     </div>
   </div>
+  <div id="calcy-buckets"></div>
   <div id="calcy-result"></div>`;
   return html;
 }
 
 let _calcyResults = null;
+let _calcyBucket = 'transfer';  // 기본 표시 — 송출 후보
 
 document.addEventListener('change', e => {
   if (e.target.id === 'calcy-file') {
@@ -2373,13 +2376,16 @@ document.addEventListener('change', e => {
     reader.onload = ev => { document.getElementById('calcy-text').value = ev.target.result; };
     reader.readAsText(f, 'utf-8');
   }
-  if (e.target.id === 'calcy-filter') {
-    renderCalcyResults();
-  }
 });
 
 document.addEventListener('click', e => {
   if (e.target.id === 'calcy-go') runCalcy();
+  const bucketBtn = e.target.closest('[data-bucket]');
+  if (bucketBtn) {
+    _calcyBucket = bucketBtn.dataset.bucket;
+    renderCalcyResults();
+  }
+  if (e.target.id === 'calcy-export') exportFilteredCSV();
 });
 
 function runCalcy() {
@@ -2445,43 +2451,138 @@ function runCalcy() {
     }
     if (result) out.push(result);
   }
+  // bucket 분류
+  for (const r of out) r.bucket = classifyBucket(r);
   _calcyResults = out;
   document.getElementById('calcy-summary').textContent =
     `총 ${out.length}마리 분석 (매칭 실패 ${unmatched})`;
   renderCalcyResults();
 }
 
+// 박스 정리 bucket 분류
+function classifyBucket(r) {
+  const top = r.decisions[0];
+  const txt = top.text || '';
+  // 종결: 99%+ 매칭 또는 100% IV
+  if (txt.includes('거의 완벽') && /99\.\d|100/.test(txt)) return 'perfect';
+  if (txt.includes('100%') && txt.includes('마스터')) return 'perfect';
+  // 레이드용
+  if (txt.includes('마스터/레이드') || txt.includes('메가 변신 베이스')) return 'raid';
+  // PvP 강화 (슈퍼/하이퍼/리틀)
+  if (/슈퍼리그|하이퍼리그|리틀컵/.test(txt) && (top.pri === 1 || top.pri === 2)) return 'pvp';
+  // 메가 보관
+  if (txt.includes('메가 가능') || txt.includes('메가 보관')) return 'mega';
+  // 컵 한정
+  if (txt.includes('컵 한정')) return 'cup';
+  // 송출
+  if (txt.includes('송출 OK')) return 'transfer';
+  // 가족 대표 보관
+  if (txt.includes('가족 대표')) return 'keep';
+  // 그 외 - 고민
+  return 'doubt';
+}
+
+const BUCKET_INFO = {
+  perfect: { label: '🏆 종결', desc: '거의 완벽 IV — 더 잡을 필요 X' },
+  raid:    { label: '⚔️ 레이드용', desc: '마스터/레이드 풀강 후보' },
+  pvp:     { label: '🛡️ PvP용', desc: '슈퍼·하이퍼·리틀 풀강' },
+  mega:    { label: '🔮 메가 보관', desc: '메가 변신 대비' },
+  cup:     { label: '🔄 컵 한정', desc: '시즌 컵 전용' },
+  keep:    { label: '🤔 보관 (가족 1마리)', desc: '메타 변동 대비' },
+  doubt:   { label: '🤔 고민', desc: 'IV 부족·랭킹 외' },
+  transfer:{ label: '📦 박사 송출', desc: '바로 보내도 OK' },
+};
+const BUCKET_ORDER = ['perfect', 'raid', 'pvp', 'mega', 'keep', 'cup', 'doubt', 'transfer'];
+
+function exportFilteredCSV() {
+  if (!_calcyResults) return;
+  const list = _calcyBucket === 'all' ? _calcyResults
+             : _calcyResults.filter(r => r.bucket === _calcyBucket);
+  const rows = [['Dex','한글','영어','속성','IV','Lv','분류','판단','이유']];
+  list.sort((a,b) => a.ko.localeCompare(b.ko, 'ko') || a.dex - b.dex);
+  for (const r of list) {
+    const top = r.decisions[0];
+    rows.push([
+      String(r.dex).padStart(3,'0'),
+      r.ko, r.en, (r.types||[]).join('/'),
+      `${r.iv.a}/${r.iv.d}/${r.iv.s}`,
+      r.level,
+      BUCKET_INFO[r.bucket]?.label || r.bucket,
+      top.text, top.why,
+    ]);
+  }
+  const csv = '﻿' + rows.map(r => r.map(c =>
+    /[,"\n]/.test(String(c)) ? '"' + String(c).replace(/"/g,'""') + '"' : c
+  ).join(',')).join('\n');
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `pogo_${_calcyBucket}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
 function renderCalcyResults() {
   if (!_calcyResults) return;
-  const filter = document.getElementById('calcy-filter')?.value || '';
-  let list = _calcyResults;
-  if (filter) list = list.filter(r => r.pri === parseInt(filter));
-  list = [...list].sort((a, b) => a.pri - b.pri || a.dex - b.dex);
-  const counts = {1:0, 2:0, 3:0, 4:0};
-  for (const r of _calcyResults) counts[r.pri] = (counts[r.pri] || 0) + 1;
-  let html = `<div class="stat">
-    🔴 ${counts[1]||0} · 🟡 ${counts[2]||0} · 🔵 ${counts[3]||0} · ⚪ ${counts[4]||0} —
-    필터: ${filter ? '['+filter+']' : '전부'} ${list.length}마리
-  </div>`;
+  const counts = {};
+  for (const r of _calcyResults) counts[r.bucket] = (counts[r.bucket] || 0) + 1;
+  // bucket 버튼들
+  let bh = '<div class="bucket-bar">';
+  bh += `<button class="bucket-btn ${_calcyBucket === 'all' ? 'on' : ''}" data-bucket="all">전부 ${_calcyResults.length}</button>`;
+  for (const b of BUCKET_ORDER) {
+    if (!counts[b]) continue;
+    const cls = _calcyBucket === b ? 'on' : '';
+    bh += `<button class="bucket-btn ${cls}" data-bucket="${b}">${BUCKET_INFO[b].label} ${counts[b]}</button>`;
+  }
+  bh += `<button id="calcy-export" class="bucket-btn export-btn" title="현재 보기 CSV 저장">⬇ CSV 저장</button>`;
+  bh += '</div>';
+  document.getElementById('calcy-buckets').innerHTML = bh;
+
+  let list = _calcyBucket === 'all' ? _calcyResults
+           : _calcyResults.filter(r => r.bucket === _calcyBucket);
+  // 같은 종 묶이게 ko 이름 정렬, 그 안에서 IV 합 높은 순
+  list = [...list].sort((a, b) => {
+    const c = a.ko.localeCompare(b.ko, 'ko');
+    if (c) return c;
+    return (b.iv.a + b.iv.d + b.iv.s) - (a.iv.a + a.iv.d + a.iv.s);
+  });
+
+  const info = BUCKET_INFO[_calcyBucket];
+  const head = info
+    ? `<div class="iv-note">${info.label} — ${info.desc}. ${list.length}마리.</div>`
+    : `<div class="stat">${list.length}마리</div>`;
+
+  let html = head;
   html += `<table><thead><tr>
-    <th>Dex</th><th>포켓몬</th><th>속성</th><th>IV (공/방/체)</th><th>Lv</th><th>판단</th>
+    <th>Dex</th><th>포켓몬</th><th>속성</th><th>IV</th><th>합계</th><th>Lv</th><th>CP</th><th>판단</th>
   </tr></thead><tbody>`;
-  for (const r of list.slice(0, 500)) {
+
+  let prevKo = null, sameKoCount = 0;
+  for (const r of list.slice(0, 800)) {
     const sp = DATA.species[r.sid];
-    const decBlock = r.decisions.map(d =>
-      `<div><b>${d.text}</b><br><small class="muted">${d.why}</small></div>`
-    ).join('');
-    html += `<tr>
+    const ivSum = r.iv.a + r.iv.d + r.iv.s;
+    const ivPct = (ivSum / 45 * 100).toFixed(0);
+    const top = r.decisions[0];
+    // 같은 종 그룹 표시 (라인 사이 구분)
+    const sameSpecies = (r.ko === prevKo);
+    if (!sameSpecies) {
+      sameKoCount = list.filter(x => x.ko === r.ko).length;
+      prevKo = r.ko;
+    }
+    const dupTag = sameKoCount > 1 ? `<small class="muted">×${sameKoCount}</small>` : '';
+    const cpEst = sp?.max_cp ? sp.max_cp : 0;
+    html += `<tr ${sameSpecies ? 'style="background:#fafafa"' : ''}>
       <td class="num">${String(r.dex).padStart(3,'0')}</td>
-      <td>${sp ? nameKo(sp) : r.ko}<br><span class="en">${r.en}</span>${r.isLucky?' 🍀':''}</td>
-      <td>${r.types.map(badge).join(' ')}</td>
+      <td>${sp ? nameKo(sp) : '<b>'+r.ko+'</b>'}${!sameSpecies?dupTag:''}<br><span class="en">${r.en}</span>${r.isLucky?' 🍀':''}</td>
+      <td>${(r.types||[]).map(badge).join(' ')}</td>
       <td class="num"><b>${r.iv.a}/${r.iv.d}/${r.iv.s}</b></td>
+      <td class="num">${ivSum}<small class="muted">/45 (${ivPct}%)</small></td>
       <td class="num">${r.level}</td>
-      <td>${decBlock}</td>
+      <td class="num"><small class="muted">~${cpEst.toLocaleString()}</small></td>
+      <td><b>${top.text}</b><br><small class="muted">${top.why || ''}</small></td>
     </tr>`;
   }
   html += `</tbody></table>`;
-  if (list.length > 500) html += `<div class="muted">+ ${list.length - 500} 더 있음 (필터 좁히세요)</div>`;
+  if (list.length > 800) html += `<div class="muted">+ ${list.length - 800} 더 있음</div>`;
   document.getElementById('calcy-result').innerHTML = html;
 }
 
