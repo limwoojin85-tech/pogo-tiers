@@ -1,7 +1,10 @@
 # Auto-scan loop for Galaxy Fold 4 (1812x2176)
 param(
     [int]$Count = 1100,
-    [int]$DelayMs = 1300
+    [int]$DelayMs = 1300,
+    [int]$SwipeFromX = 1500,
+    [int]$SwipeToX = 300,
+    [int]$SwipeY = 1000
 )
 
 $adb = Join-Path $PSScriptRoot "platform-tools\adb.exe"
@@ -21,7 +24,7 @@ $start = Get-Date
 $progressInterval = 50
 
 for ($i = 1; $i -le $Count; $i++) {
-    & $adb shell input swipe 1500 1000 300 1000 200 2>&1 | Out-Null
+    & $adb shell input swipe $SwipeFromX $SwipeY $SwipeToX $SwipeY 200 2>&1 | Out-Null
 
     if ($i % $progressInterval -eq 0) {
         $elapsed = (Get-Date) - $start

@@ -2476,10 +2476,56 @@ function runCalcy() {
   }
   // bucket 분류
   for (const r of out) r.bucket = classifyBucket(r);
+  // 같은 종 여러 마리 — 최고 1마리만 keep, 나머지 송출
+  dedupeKeepBuckets(out);
   _calcyResults = out;
   document.getElementById('calcy-summary').textContent =
     `총 ${out.length}마리 분석 (매칭 실패 ${unmatched})`;
   renderCalcyResults();
+}
+
+// 같은 종 여러 마리 — keep/mega 버킷에 든 종은 최고 1마리만 남기고 중복 송출
+function dedupeKeepBuckets(results) {
+  const KEEP_BUCKETS = new Set(['keep', 'mega', 'perfect', 'raid', 'pvp']);
+  const bySid = {};
+  for (const r of results) {
+    if (!KEEP_BUCKETS.has(r.bucket)) continue;
+    if (!bySid[r.bucket]) bySid[r.bucket] = {};
+    if (!bySid[r.bucket][r.sid]) bySid[r.bucket][r.sid] = [];
+    bySid[r.bucket][r.sid].push(r);
+  }
+  // 'keep' bucket: 가족 보관 1마리만, 중복은 송출
+  // 'mega' bucket: 메가 변신 1마리만 (100% IV 우선), 중복은 송출
+  // 'perfect/raid/pvp': 같은 종 여러 마리면 최고만 keep-tier, 나머지 송출
+  for (const bucket of Object.keys(bySid)) {
+    for (const sid of Object.keys(bySid[bucket])) {
+      const list = bySid[bucket][sid];
+      if (list.length <= 1) continue;
+      // 정렬: ATK 가중치 + 합계
+      list.sort((a, b) => {
+        const sa = a.iv.a * 2 + a.iv.d + a.iv.s + (a.isLucky ? 5 : 0);
+        const sb = b.iv.a * 2 + b.iv.d + b.iv.s + (b.isLucky ? 5 : 0);
+        return sb - sa;
+      });
+      // 1번째 = 유지, 나머지는 송출 bucket 으로
+      for (let i = 1; i < list.length; i++) {
+        const r = list[i];
+        r.bucket = 'transfer';
+        r.decisions = [{
+          pri: 4,
+          text: `📦 중복 송출 — 같은 종 ${list.length}마리 중 ${i + 1}번째`,
+          why: `최고: ${list[0].ko} IV ${list[0].iv.a}/${list[0].iv.d}/${list[0].iv.s}`,
+        }];
+        r.pri = 4;
+      }
+      // 1번째 keep 표시 보강
+      const top = list[0];
+      const wasKeep = KEEP_BUCKETS.has(top.bucket);
+      if (wasKeep && list.length > 1 && top.decisions[0]) {
+        top.decisions[0].why = (top.decisions[0].why || '') + ` (이 종 ${list.length}마리 중 최고)`;
+      }
+    }
+  }
 }
 
 // 박스 정리 bucket 분류

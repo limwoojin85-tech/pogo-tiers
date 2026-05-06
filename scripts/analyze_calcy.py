@@ -448,6 +448,33 @@ def main() -> None:
                     "decisions": [(4, "⚪ 박사 송출 OK (분류 없음)", "")], "pri": 4,
                 })
 
+    # 같은 종 여러 마리 — keep 버킷 종류면 최고 1마리만 남기고 나머지 송출
+    KEEP_TXT_PATTERNS = ["가족 대표", "메가 변신", "메가 보관", "메가 가능"]
+
+    def is_keep(r):
+        if not r["decisions"]:
+            return False
+        return any(p in r["decisions"][0][1] for p in KEEP_TXT_PATTERNS)
+
+    by_sid: dict[str, list] = {}
+    for r in results:
+        if is_keep(r):
+            by_sid.setdefault(r["sid"], []).append(r)
+    for sid, lst in by_sid.items():
+        if len(lst) <= 1:
+            continue
+        # ATK 가중치
+        lst.sort(key=lambda r: -(r["iv"][0] * 2 + r["iv"][1] + r["iv"][2] + (5 if r.get("lucky") else 0)))
+        # 1번째 keep, 나머지 송출
+        top = lst[0]
+        for i, r in enumerate(lst[1:], 2):
+            r["decisions"] = [(4, f"📦 중복 송출 — {i}번째 (최고: IV {top['iv'][0]}/{top['iv'][1]}/{top['iv'][2]})", "")]
+            r["pri"] = 4
+        # 최고 마리 표시 보강
+        if top["decisions"]:
+            old = top["decisions"][0]
+            top["decisions"][0] = (old[0], old[1], (old[2] + f" (총 {len(lst)}마리 중 최고)").strip())
+
     print(f"\n[match] {len(results)} / {len(rows) - 1} 분석 완료")
     if unmatched_names:
         print(f"[unmatched] {sum(unmatched_names.values())} entries / {len(unmatched_names)} unique names")
