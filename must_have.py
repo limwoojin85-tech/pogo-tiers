@@ -23,8 +23,8 @@ TRANS_FILE = ROOT / "data" / "translations.json"
 OUT = ROOT / "out"
 OUT.mkdir(exist_ok=True)
 
-PVP_TOP_N = 30        # 컵에서 박스 매칭용 — 8위 컷은 박해서 30위까지
-RAID_TOP_N = 15       # 레이드 카운터도 메타 외 픽 포함
+PVP_TOP_N = 20        # 원래 15 → 20 (살짝만 넓힘)
+RAID_TOP_N = 10       # 원래 8 → 10
 ESSENTIAL_PVP_RANK = 5
 ESSENTIAL_RAID_RANK = 5
 MAJOR_LEAGUES_KEYS = {"all_1500", "all_2500", "all_10000"}
