@@ -2431,6 +2431,7 @@ function detectColumns(headers) {
   };
   return {
     name: find(['name', 'pokemon', 'species', '이름', '포켓몬', '몬스터']),
+    nickname: find(['nickname', 'name (nickname)', '닉네임', '별명']),
     form: find(['form', '폼']),
     cp: find(['cp']),
     atk: find(['avg att iv', 'avg att', 'att iv', 'atk', 'attack', '공격']),
@@ -2512,6 +2513,8 @@ function runCalcy() {
     const ivS = parseInt(r[cols.sta]);
     const lv = parseFloat(r[cols.level]) || 30;
     const lucky = cols.lucky >= 0 && /^(yes|true|1|y|럭키)$/i.test(r[cols.lucky]);
+    const nickname = (cols.nickname >= 0 ? r[cols.nickname] : '') || '';
+    const cp = (cols.cp >= 0 ? parseInt(r[cols.cp]) : 0) || 0;
     if (isNaN(ivA) || isNaN(ivD) || isNaN(ivS)) continue;
 
     let result;
@@ -2553,7 +2556,11 @@ function runCalcy() {
         pri,
       };
     }
-    if (result) out.push(result);
+    if (result) {
+      result.nickname = nickname;
+      result.cp = cp;
+      out.push(result);
+    }
   }
   // 박스 기준 팀 빌드 — bucket 분류 가 팀 멤버십을 사용하므로 먼저
   buildUserTeams(out);
@@ -2912,24 +2919,35 @@ const BUCKET_INFO = {
   hold:         { label: '🤔 보류',                 desc: '가족 대표 / 메가 변신 대비 / 진화 필요 / 애매 IV' },
   transfer:     { label: '📦 박사 송출',             desc: '어디에도 안 쓰이는 종 — 진짜 송출' },
   transfer_dup: { label: '🔁 중복 송출',             desc: '같은 종에서 더 좋은 마리 있어 송출' },
+  // ─── 가상 bucket — transfer + transfer_dup 합쳐서 종별 정리
+  transfer_all: { label: '📋 송출 종합 (정리표)',     desc: '송출 + 중복 송출 모두, 종별로 묶음 + 닉네임 (인게임 검색용)' },
 };
 const BUCKET_ORDER = [
   'team_raid_current', 'team_raid_type', 'team_gl', 'team_ul', 'team_cups',
-  'cand_raid', 'hold', 'transfer', 'transfer_dup',
+  'cand_raid', 'hold', 'transfer', 'transfer_dup', 'transfer_all',
 ];
 
 function exportFilteredCSV() {
   if (!_calcyResults) return;
-  const list = _calcyBucket === 'all' ? _calcyResults
-             : _calcyResults.filter(r => r.bucket === _calcyBucket);
-  const rows = [['Dex','한글','영어','속성','IV','Lv','분류','판단','이유']];
+  let list;
+  if (_calcyBucket === 'all') list = _calcyResults;
+  else if (_calcyBucket === 'transfer_all')
+    list = _calcyResults.filter(r => r.bucket === 'transfer' || r.bucket === 'transfer_dup');
+  else list = _calcyResults.filter(r => r.bucket === _calcyBucket);
+
+  const rows = [['Dex','한글','영어','닉네임','CP','속성','IV','IV%','Lv','분류','판단','이유']];
   list.sort((a,b) => a.ko.localeCompare(b.ko, 'ko') || a.dex - b.dex);
   for (const r of list) {
     const top = r.decisions[0];
+    const ivSum = r.iv.a + r.iv.d + r.iv.s;
     rows.push([
       String(r.dex).padStart(3,'0'),
-      r.ko, r.en, (r.types||[]).join('/'),
+      r.ko, r.en,
+      r.nickname || '',
+      r.cp || '',
+      (r.types||[]).join('/'),
       `${r.iv.a}/${r.iv.d}/${r.iv.s}`,
+      `${(ivSum/45*100).toFixed(0)}%`,
       r.level,
       BUCKET_INFO[r.bucket]?.label || r.bucket,
       top.text, top.why,
@@ -2949,6 +2967,8 @@ function renderCalcyResults() {
   if (!_calcyResults) return;
   const counts = {};
   for (const r of _calcyResults) counts[r.bucket] = (counts[r.bucket] || 0) + 1;
+  // 가상 bucket — transfer_all = transfer + transfer_dup
+  counts['transfer_all'] = (counts['transfer'] || 0) + (counts['transfer_dup'] || 0);
 
   let bh = '<div class="bucket-bar">';
   bh += `<button class="bucket-btn ${_calcyBucket === 'all' ? 'on' : ''}" data-bucket="all">전부 ${_calcyResults.length}</button>`;
@@ -2968,6 +2988,7 @@ function renderCalcyResults() {
     team_gl:           () => renderTeamLeague('GL'),
     team_ul:           () => renderTeamLeague('UL'),
     team_cups:         renderTeamCups,
+    transfer_all:      renderTransferAll,
   };
   if (TEAM_RENDERERS[_calcyBucket]) {
     document.getElementById('calcy-result').innerHTML = TEAM_RENDERERS[_calcyBucket]();
@@ -3226,6 +3247,68 @@ function renderTeamCups() {
     const ri = _myTeams.reinforcement?.cups?.[k];
     if (ri) html += _reinforcementBox(ri.meta, ri.missing, ct.league_ko);
   }
+  return html;
+}
+
+// 📋 송출 종합 — transfer + transfer_dup 합쳐서 종별 묶음
+function renderTransferAll() {
+  const list = _calcyResults.filter(r => r.bucket === 'transfer' || r.bucket === 'transfer_dup');
+  if (!list.length) return '<div class="empty">송출 대상 없음</div>';
+
+  // 종별 묶음
+  const bySpecies = {};
+  for (const r of list) {
+    const key = r.ko || r.sid;
+    if (!bySpecies[key]) bySpecies[key] = { sp_ref: r, list: [] };
+    bySpecies[key].list.push(r);
+  }
+  const groups = Object.entries(bySpecies)
+    .sort((a, b) => b[1].list.length - a[1].list.length || a[0].localeCompare(b[0], 'ko'));
+
+  const totalDup = list.filter(r => r.bucket === 'transfer_dup').length;
+  const totalReal = list.filter(r => r.bucket === 'transfer').length;
+
+  let html = `<div class="iv-note" style="background:#fee;color:#900">
+    <b>📋 송출 종합 — 총 ${list.length}마리 (${groups.length}종)</b><br>
+    📦 박사 송출 ${totalReal}마리 + 🔁 중복 송출 ${totalDup}마리.
+    Pokemon GO 박스에서 검색창에 닉네임/IV 검색 후 멀티 선택 → 박사 송출.
+    <br><small class="muted">⬇ CSV 저장 으로 다운받아 체크리스트로 사용</small>
+  </div>`;
+
+  html += `<table><thead><tr>
+    <th>종</th><th>마리수</th><th>속성</th><th>송출할 마리 (닉네임 · IV · CP · 분류)</th>
+  </tr></thead><tbody>`;
+
+  for (const [koName, g] of groups) {
+    const ref = g.sp_ref;
+    // 종 내부 정렬 — 중복송출 먼저, 그 다음 IV 낮은 순 (보낼 우선순위 확실)
+    g.list.sort((a, b) => {
+      if (a.bucket !== b.bucket) return a.bucket === 'transfer_dup' ? -1 : 1;
+      return (a.iv.a + a.iv.d + a.iv.s) - (b.iv.a + b.iv.d + b.iv.s);
+    });
+    const rows = g.list.map(r => {
+      const iv = `${r.iv.a}/${r.iv.d}/${r.iv.s}`;
+      const ivSum = r.iv.a + r.iv.d + r.iv.s;
+      const ivPct = (ivSum / 45 * 100).toFixed(0);
+      const nick = r.nickname ? `<b>${r.nickname}</b>` : '<span class="muted">(닉 없음)</span>';
+      const cp = r.cp ? `CP${r.cp}` : '';
+      const tag = r.bucket === 'transfer_dup'
+        ? '<span class="ovl ovl-cup" style="background:#ffe4cc">🔁 중복</span>'
+        : '<span class="ovl ovl-cup">📦 송출</span>';
+      return `<tr>
+        <td colspan="2"></td>
+        <td>${nick}</td>
+        <td><span class="num">${iv}</span> <small class="muted">(${ivPct}%)</small> · ${cp} · ${tag}</td>
+      </tr>`;
+    }).join('');
+    html += `<tr style="border-top:2px solid #ddd;background:#fafafa">
+      <td><b>${koName}</b><br><small class="muted">Dex ${String(ref.dex).padStart(3,'0')}</small></td>
+      <td class="num"><b>${g.list.length}</b></td>
+      <td>${(ref.types||[]).map(badge).join(' ')}</td>
+      <td><small class="muted">↓ ${g.list.length}마리</small></td>
+    </tr>${rows}`;
+  }
+  html += `</tbody></table>`;
   return html;
 }
 
