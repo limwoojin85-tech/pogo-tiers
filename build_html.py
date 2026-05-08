@@ -649,6 +649,7 @@ def collect_all(species, moves, trans):
     transfer_groups = []
     mega_keep_groups = []          # 메가가 ranked — 무조건 베이스 보관
     mega_possible_groups = []      # 메가 폼 존재하지만 ranked 는 아님 — 추후 대비 보관
+    pre_evolution_groups = []      # 일반 형태가 ranked 인 family 의 비랭킹 멤버 (예: 깝질무 → 트리토돈)
 
     for fid, mids in family_members.items():
         ranked_in_family = [s for s in mids if s in ranked_sids]
@@ -723,7 +724,23 @@ def collect_all(species, moves, trans):
                 "evo_kind": (SPECIAL_EVO.get(keep_member["sid"]) or (None,))[0],
                 "evo_note": (SPECIAL_EVO.get(keep_member["sid"]) or (None, None))[1],
             })
-        # else: 일반 형태가 ranked — 다른 탭에 이미 노출
+        else:
+            # 일반 형태가 ranked — 비랭킹 멤버 (mid-evos, shadow forms 등) 도 알려줘야 함
+            # 예: gastrodon (트리토돈) ranked → shellos (깝질무) 도 분류 필요
+            # 베이스 ranked species (final form)
+            ranked_normal_members = [m for m in member_dicts if m["sid"] in ranked_normal]
+            target = ranked_normal_members[-1] if ranked_normal_members else keep_member
+            non_ranked_normal = [m for m in member_dicts
+                                 if m["sid"] not in ranked_sids and not m["is_mega"]]
+            if non_ranked_normal:
+                pre_evolution_groups.append({
+                    "family_id": fid,
+                    "evolves_to_sid": target["sid"],
+                    "evolves_to_ko": target["ko"],
+                    "evolves_to_en": target["en"],
+                    "evolves_to_dex": target["dex"],
+                    "members": non_ranked_normal,  # 깝질무 등 mid-evos / shadow forms
+                })
 
     transfer_groups.sort(key=lambda g: g["keep_dex"])
     mega_keep_groups.sort(key=lambda g: g["keep_dex"])
@@ -909,6 +926,7 @@ def collect_all(species, moves, trans):
         "transfer_groups": transfer_groups,
         "mega_keep_groups": mega_keep_groups,
         "mega_possible_groups": mega_possible_groups,
+        "pre_evolution_groups": pre_evolution_groups,
         "unranked": unranked,
     }
 
@@ -2053,8 +2071,8 @@ const NAME_INDEX = (() => {
     for (const k of (sp.chain_ko || [])) add(k, sp.id);
     for (const e of (sp.chain_en || [])) add(e, sp.id);
   }
-  // 2) 가족 그룹 멤버
-  for (const groupKey of ['transfer_groups', 'mega_keep_groups', 'mega_possible_groups']) {
+  // 2) 가족 그룹 멤버 (transfer / mega 보관 / 메가 가능 / 진화전 단계)
+  for (const groupKey of ['transfer_groups', 'mega_keep_groups', 'mega_possible_groups', 'pre_evolution_groups']) {
     for (const g of (DATA[groupKey] || [])) {
       for (const m of (g.members || [])) {
         add(m.ko, m.sid); add(m.en, m.sid); add(m.sid, m.sid);
@@ -2138,7 +2156,7 @@ function matchSpecies(name, form, isShadow) {
   return baseId;
 }
 
-// 종 정보 lookup — species_out 우선, 없으면 transfer/mega/unranked
+// 종 정보 lookup — species_out 우선, 없으면 transfer/mega/pre-evo/unranked
 function lookupSpecies(sid) {
   if (DATA.species[sid]) return { sp: DATA.species[sid], category: 'species' };
   for (const g of (DATA.transfer_groups || [])) {
@@ -2152,6 +2170,11 @@ function lookupSpecies(sid) {
   for (const g of (DATA.mega_possible_groups || [])) {
     const m = g.members.find(x => x.sid === sid);
     if (m) return { sp: m, category: 'mega_possible', group: g };
+  }
+  // 진화 전 단계 — 깝질무 → 트리토돈 등
+  for (const g of (DATA.pre_evolution_groups || [])) {
+    const m = g.members.find(x => x.sid === sid);
+    if (m) return { sp: m, category: 'pre_evolution', group: g };
   }
   if (DATA.unranked && DATA.unranked[sid]) return { sp: DATA.unranked[sid], category: 'unranked' };
   return null;
@@ -2512,6 +2535,12 @@ function runCalcy() {
         if (m.is_shadow) { pri = 4; text = '⚪ 박사 송출 OK (쉐도우)'; }
         else if (isKeep) { pri = 3; text = '🔵 가족 대표 — 1마리 보관'; why = '메타 변동 대비'; }
         else { pri = 4; text = '⚪ 박사 송출 OK'; why = '가족 송출 후보'; }
+      } else if (lookup.category === 'pre_evolution') {
+        // 깝질무 → 트리토돈 등 — 진화 후 사용
+        const target = lookup.group?.evolves_to_ko || '최종 진화형';
+        pri = 3;
+        text = `🔄 진화 필요 — ${target} 로 진화시켜 사용`;
+        why = '미진화 상태로는 팀 빌더 X — 진화 후 평가';
       } else {
         pri = 4; text = '⚪ 박사 송출 OK (분류 없음)'; why = '';
       }
@@ -2851,8 +2880,9 @@ function classifyBucket(r) {
   const decTexts = r.decisions.map(d => d.text || '');
   const anyDec = (re) => decTexts.some(t => re.test(t));
 
-  // 분명한 송출 신호
-  if (anyDec(/컵 못 씀|중복 송출|송출 OK/)) return 'transfer';
+  // 분명한 송출 신호 — 중복(같은 종 다른 IV) 과 진짜 송출 분리
+  if (anyDec(/중복 송출/)) return 'transfer_dup';
+  if (anyDec(/컵 못 씀|송출 OK/)) return 'transfer';
 
   // 백개체 — 메타 역할 있을 때만 cand_raid, 없으면 hold (콜렉션)
   if (r.iv.a === 15 && r.iv.d === 15 && r.iv.s === 15) {
@@ -2878,13 +2908,14 @@ const BUCKET_INFO = {
   team_ul:           { label: '🛡️ 하이퍼리그 베스트 6', desc: '2500 캡: 베스트 6 + 후보 + 메타 보강' },
   team_cups:         { label: '🥊 각종 컵 베스트 6',     desc: '컵별: 진행중 컵 상단, 베스트 6 + 후보' },
   // ─── 그 외
-  cand_raid: { label: '⚔️ 레이드 백개체·ATK15', desc: '현재 보스에 안 맞는 백개체/ATK15 강자' },
-  hold:      { label: '🤔 보류',                 desc: '가족 대표 / 메가 변신 대비' },
-  transfer:  { label: '📦 박사 송출',             desc: '바로 보내도 OK' },
+  cand_raid:    { label: '⚔️ 레이드 백개체·ATK15', desc: '현재 보스에 안 맞는 백개체/ATK15 강자' },
+  hold:         { label: '🤔 보류',                 desc: '가족 대표 / 메가 변신 대비 / 진화 필요 / 애매 IV' },
+  transfer:     { label: '📦 박사 송출',             desc: '어디에도 안 쓰이는 종 — 진짜 송출' },
+  transfer_dup: { label: '🔁 중복 송출',             desc: '같은 종에서 더 좋은 마리 있어 송출' },
 };
 const BUCKET_ORDER = [
   'team_raid_current', 'team_raid_type', 'team_gl', 'team_ul', 'team_cups',
-  'cand_raid', 'hold', 'transfer',
+  'cand_raid', 'hold', 'transfer', 'transfer_dup',
 ];
 
 function exportFilteredCSV() {
