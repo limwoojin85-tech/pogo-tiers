@@ -502,6 +502,54 @@ def collect_all(species, moves, trans):
             })
         leagues_out[league_key] = league_out
 
+    # ─── Manual picks — 유튜브/Reddit 등에서 본 niche 메타 (pvpoke 컷오프 밖 종)
+    manual_path = PVPOKE.parent / "manual_picks.json"
+    if manual_path.exists():
+        try:
+            manual = json.loads(manual_path.read_text(encoding="utf-8"))
+            applied = 0
+            for league_key, picks in manual.items():
+                if league_key.startswith("_"):
+                    continue
+                ko, en = LEAGUE_KO.get(league_key, (league_key, league_key))
+                for sid, info in picks.items():
+                    if sid.startswith("_") or sid not in species_out:
+                        continue
+                    rank = info.get("rank", 99)
+                    src = info.get("source", "")
+                    note = info.get("note", "")
+                    moveset_ko = info.get("moveset_ko", "")
+                    moveset_en = info.get("moveset_en", "")
+                    # 이미 같은 league_key entry 있으면 manual rank 가 더 좋으면 갱신
+                    existing = next((p for p in species_out[sid]["pvp"]
+                                     if p["league_key"] == league_key), None)
+                    if existing:
+                        if rank < existing["rank"]:
+                            existing["rank"] = rank
+                            existing["manual"] = True
+                            existing["manual_source"] = src
+                            existing["manual_note"] = note
+                    else:
+                        # species_out 에 새 league entry 추가
+                        species_out[sid]["pvp"].append({
+                            "league_key": league_key,
+                            "league_ko": ko, "league_en": en,
+                            "is_major": league_key in MAJOR_LEAGUES_KEYS,
+                            "is_archive": league_key in archive_set,
+                            "rank": rank,
+                            "fast_ko": moveset_ko.split(" / ")[0] if " / " in moveset_ko else "",
+                            "fast_en": moveset_en.split(" / ")[0] if " / " in moveset_en else "",
+                            "charged_ko": " · ".join(moveset_ko.split(" / ")[1:]) if " / " in moveset_ko else moveset_ko,
+                            "charged_en": " · ".join(moveset_en.split(" / ")[1:]) if " / " in moveset_en else moveset_en,
+                            "manual": True,
+                            "manual_source": src,
+                            "manual_note": note,
+                        })
+                    applied += 1
+            print(f"[manual] {applied} picks 수동 추가 (data/manual_picks.json)")
+        except Exception as e:
+            print(f"[manual] manual_picks.json 파싱 실패: {e}")
+
     # 레이드 데이터 + 필드 포획 판단용 보스 sid 셋
     raid_boss_sids: set[str] = set()
     bosses_out: dict[str, dict] = {}

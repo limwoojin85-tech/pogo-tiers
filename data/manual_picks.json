@@ -1,0 +1,31 @@
+{
+  "_about": {
+    "purpose": "pvpoke 랭킹에 안 잡히는 niche 메타 픽 — 유튜브/Reddit/PvPoke 디스코드 등에서 추천된 종을 수동으로 추가",
+    "format": "league_key 별로 sid → {rank, source, note}. rank 는 manual override 우선순위 (1 = 최상위 픽)",
+    "applied_at": "must_have.py 에서 species.pvp 배열에 추가됨 (overrides pvpoke rank)"
+  },
+
+  "all_1500": {
+    "bibarel": {
+      "rank": 1,
+      "source": "broccoalri 유튜브 — '슈퍼리그 떡상! 모르페코&비버통을 같이 썼더니?'",
+      "note": "모르페코 + 비버통 조합. 비버통 = 노말/물 — 워터건 + 손도끼 + 통뼈로 다양한 카운터",
+      "moveset_ko": "물대포 / 손도끼 / 통뼈"
+    }
+  },
+
+  "sinnoh_1500": {
+    "bibarel": {
+      "rank": 1,
+      "source": "broccoalri / pvpoke #40",
+      "note": "신오컵에서 강력한 picks. 노말+물 듀얼타입 활용"
+    }
+  },
+
+  "_examples": {
+    "_about": "추가하고 싶은 컵 픽 형식 예시",
+    "color_1500": {
+      "_": "_examples 키 안의 데이터는 무시됨"
+    }
+  }
+}

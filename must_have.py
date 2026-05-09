@@ -23,7 +23,7 @@ TRANS_FILE = ROOT / "data" / "translations.json"
 OUT = ROOT / "out"
 OUT.mkdir(exist_ok=True)
 
-PVP_TOP_N = 20        # 원래 15 → 20 (살짝만 넓힘)
+PVP_TOP_N = 50        # 컵 niche 메타까지 잡기 (비버통 신오컵 #40 등 — 유튜브 1티어 분석 반영)
 RAID_TOP_N = 10       # 원래 8 → 10
 ESSENTIAL_PVP_RANK = 5
 ESSENTIAL_RAID_RANK = 5
@@ -343,6 +343,40 @@ def collect_pvp(species: dict[str, dict], moves: dict[str, str],
                 "moves_ko": move_str_ko,
                 "moves_en": move_str_en,
             })
+
+    # ─── manual_picks.json — 유튜브/Reddit/디스코드 등에서 본 niche 메타 픽 강제 추가
+    manual_path = ROOT / "data" / "manual_picks.json"
+    if manual_path.exists():
+        manual = json.loads(manual_path.read_text(encoding="utf-8"))
+        added = 0
+        for league_key, picks in manual.items():
+            if league_key.startswith("_"):
+                continue
+            ko, en = LEAGUE_KO.get(league_key, (league_key, league_key))
+            for sid, info in picks.items():
+                if sid.startswith("_"):
+                    continue
+                # 이미 같은 league_key 의 entry 있으면 rank 만 업그레이드
+                exists = next((p for p in out[sid] if p["league_key"] == league_key), None)
+                if exists:
+                    if info.get("rank", 99) < exists["rank"]:
+                        exists["rank"] = info["rank"]
+                        exists["manual"] = True
+                        exists["manual_source"] = info.get("source", "")
+                else:
+                    out[sid].append({
+                        "league_key": league_key,
+                        "league_ko": ko, "league_en": en,
+                        "rank": info.get("rank", 99),
+                        "score": 0,
+                        "moves_ko": info.get("moveset_ko", ""),
+                        "moves_en": info.get("moveset_en", ""),
+                        "manual": True,
+                        "manual_source": info.get("source", ""),
+                        "manual_note": info.get("note", ""),
+                    })
+                added += 1
+        print(f"[manual] {added} picks 수동 추가 (manual_picks.json)")
     return out
 
 
