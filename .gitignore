@@ -11,6 +11,7 @@ data/pvpoke/*.json
 data/pokebattler/counters/*.json
 data/pokebattler/tiers.json
 data/translations.json
+data/egg_pool.json
 
 # ADB 자동 스캔 - 로컬 전용
 scripts/calcy_adb/platform-tools/

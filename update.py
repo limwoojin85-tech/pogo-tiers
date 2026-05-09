@@ -50,12 +50,15 @@ def main() -> None:
     do_pvpoke = args.force or not is_fresh(DATA / "pvpoke" / "_gamemaster.json", args.max_age)
     do_pb = args.force or not is_fresh(DATA / "pokebattler" / "tiers.json", args.max_age)
     do_trans = args.force or not is_fresh(DATA / "translations.json", args.max_age * 7)
+    do_egg = args.force or not is_fresh(DATA / "egg_pool.json", args.max_age * 3)
     # 번역은 거의 안 바뀜 → 일주일
+    # 알 풀은 시즌 단위 갱신 (~3일 주기로 충분)
 
     if args.no_fetch:
-        do_pvpoke = do_pb = do_trans = False
+        do_pvpoke = do_pb = do_trans = do_egg = False
 
-    print(f"[update] pvpoke={do_pvpoke}, pokebattler={do_pb}, translations={do_trans}")
+    print(f"[update] pvpoke={do_pvpoke}, pokebattler={do_pb}, "
+          f"translations={do_trans}, egg_pool={do_egg}")
 
     if do_pvpoke:
         run("fetch_pvpoke.py")
@@ -63,6 +66,8 @@ def main() -> None:
         run("fetch_pokebattler.py")
     if do_trans:
         run("fetch_translations.py")
+    if do_egg:
+        run("fetch_egg_pool.py")
 
     run("must_have.py")
     run("build_html.py")

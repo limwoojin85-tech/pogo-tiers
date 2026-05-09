@@ -279,12 +279,39 @@ def collect_all(species, moves, trans):
     }
 
     # 획득처 분류
+    # 알 풀 로드 — egg_pool.json (LeekDuck 자동 갱신)
+    egg_pool_path = PVPOKE.parent / "egg_pool.json"
+    egg_km_by_sid: dict[str, str] = {}
+    if egg_pool_path.exists():
+        try:
+            ep = json.loads(egg_pool_path.read_text(encoding="utf-8"))
+            for km in ("2", "5", "7", "10", "12"):
+                for sid in (ep.get(km) or []):
+                    if sid not in egg_km_by_sid:
+                        egg_km_by_sid[sid] = km
+        except Exception:
+            pass
+
     def acquisition_methods(sid: str) -> list[str]:
         p = pokemon_by_sid.get(sid)
         if not p:
             return ["?"]
         tags = set(p.get("tags", []))
         methods: list[str] = []
+
+        # 알 거리 라벨 (현재 풀에 있는 종)
+        egg_km = egg_km_by_sid.get(sid)
+        # 진화 전 단계도 알 풀에 있을 수 있음 — 부모 sid 도 체크
+        if not egg_km:
+            cur = sid
+            for _ in range(3):
+                par = parent_map.get(cur)
+                if not par: break
+                if par in egg_km_by_sid:
+                    egg_km = egg_km_by_sid[par]
+                    break
+                cur = par
+        egg_label = f"🥚 {egg_km}km" if egg_km else None
 
         if sid.endswith("_shadow"):
             return ["로켓 그런츠/리더"]
@@ -326,6 +353,9 @@ def collect_all(species, moves, trans):
                 methods.append("진화")
             else:
                 methods.append("야생/알/리서치")
+        # 알 거리 라벨 추가 — 풀에 있으면 항상 표시
+        if egg_label and egg_label not in methods:
+            methods.append(egg_label)
         return methods
 
     def is_field_catchable(sid: str, raid_boss_sids: set) -> bool:
@@ -766,12 +796,24 @@ def collect_all(species, moves, trans):
             if not mp or not mp.get("released", True):
                 continue
             ko = species_ko_name(mp["dex"], prettify_name(mp["speciesName"]), trans)
+            # 알 거리 — 자기 자신 또는 family chain 의 부모가 알 풀에 있으면
+            mid_egg_km = egg_km_by_sid.get(mid)
+            if not mid_egg_km:
+                cur = mid
+                for _ in range(3):
+                    par = parent_map.get(cur)
+                    if not par: break
+                    if par in egg_km_by_sid:
+                        mid_egg_km = egg_km_by_sid[par]
+                        break
+                    cur = par
             member_dicts.append({
                 "sid": mid, "dex": mp["dex"],
                 "ko": ko, "en": prettify_name(mp["speciesName"]),
                 "types": [t for t in mp.get("types", []) if t and t != "none"],
                 "is_shadow": "_shadow" in mid,
                 "is_mega": is_special_form(mid),
+                "egg_km": mid_egg_km,  # 알 거리 (있으면) — UI 에서 🥚 라벨
             })
         if not member_dicts:
             continue
