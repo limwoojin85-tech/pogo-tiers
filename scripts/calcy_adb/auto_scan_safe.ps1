@@ -1,4 +1,4 @@
-# Auto-scan with dropout detection
+﻿# Auto-scan with dropout detection
 # Calcy 조사하기 꺼지면 자동 감지 (history.csv mtime 모니터링) + 일시정지 + 비프
 # 사용자가 Calcy 다시 켜고 Enter 누르면 재개
 #
@@ -11,6 +11,7 @@ param(
     [int]$SwipeFromX = 1500,             # Galaxy Fold 4 (1812×2176) 기준
     [int]$SwipeToX = 300,
     [int]$SwipeY = 1000,
+    [int]$SwipeDurationMs = 600,         # 스와이프 자체 동작 시간 — 짧으면 탭으로 오인 (조사하기 dismiss 됨)
     [int]$ProgressEverySec = 30,         # 진행률 출력 주기 (콘솔)
     [switch]$NoBeep                       # 비프 끄기
 )
@@ -23,9 +24,18 @@ New-Item -ItemType Directory -Force -Path $shotDir | Out-Null
 
 if (-not (Test-Path $adb)) { Write-Host "[err] adb.exe 없음 — setup.ps1 먼저" -ForegroundColor Red; exit 1 }
 if (-not (Test-Path $csv)) {
-    Write-Host "[warn] history.csv 없음 — 새로 생성됨. dropout 감지 비활성화" -ForegroundColor Yellow
+    Write-Host "[warn] history.csv 없음 — Renamer 안 돌고 있음. dropout 감지 비활성화" -ForegroundColor Yellow
     $detectDropout = $false
-} else { $detectDropout = $true }
+} else {
+    # 파일 mtime 이 60초 이상 오래됐으면 Renamer 비사용 — dropout 감지 즉시 비활성
+    $age = ((Get-Date) - (Get-Item $csv).LastWriteTime).TotalSeconds
+    if ($age -gt 60) {
+        Write-Host "[info] history.csv 마지막 갱신 $([math]::Round($age, 0))초 전 — Renamer 미사용. dropout 감지 OFF (Calcy 자체 history 사용)" -ForegroundColor Yellow
+        $detectDropout = $false
+    } else {
+        $detectDropout = $true
+    }
+}
 
 # 상태
 $startTime = Get-Date
@@ -56,8 +66,8 @@ function Show-Progress($i, $total, $startTime, $pausedTime) {
 }
 
 for ($i = 1; $i -le $Count; $i++) {
-    # 스와이프
-    & $adb shell input swipe $SwipeFromX $SwipeY $SwipeToX $SwipeY 200 2>&1 | Out-Null
+    # 스와이프 — 길고 천천히 (탭으로 오인 방지, 조사하기 dismiss 안 됨)
+    & $adb shell input swipe $SwipeFromX $SwipeY $SwipeToX $SwipeY $SwipeDurationMs 2>&1 | Out-Null
     Start-Sleep -Milliseconds $DelayMs
 
     # Dropout 감지 — history.csv mtime 변화 추적
@@ -68,6 +78,12 @@ for ($i = 1; $i -le $Count; $i++) {
             $lastActivityTime = Get-Date
         } else {
             $silentSec = ((Get-Date) - $lastActivityTime).TotalSeconds
+            # 첫 60초 동안 한번도 갱신 없으면 Renamer 안 돌고 있다 판단 → 감지 자동 비활성
+            if ($silentSec -ge 60 -and ((Get-Date) - $startTime).TotalSeconds -le 75) {
+                Write-Host "[info] 첫 60초 내 history.csv 변화 없음 — Renamer 비사용 모드. dropout 감지 비활성" -ForegroundColor Yellow
+                $detectDropout = $false
+                continue
+            }
             if ($silentSec -ge $DropoutThresholdSec) {
                 # PAUSE
                 Write-Host ""

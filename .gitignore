@@ -19,3 +19,15 @@ scripts/calcy_adb/_shots/
 scripts/calcy_adb/_pip.log
 scripts/calcy_adb/*.csv         # 개인 박스 데이터
 scripts/calcy_adb/history*.csv
+
+# PokeManager Android 앱 — gradle/IDE 캐시 제외
+PokeManager/.gradle/
+PokeManager/.idea/
+PokeManager/.kotlin/
+PokeManager/build/
+PokeManager/app/build/
+PokeManager/local.properties
+PokeManager/captures/
+PokeManager/*.iml
+PokeManager/app/*.iml
+PokeManager/.cxx/
