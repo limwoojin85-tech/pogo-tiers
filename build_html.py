@@ -344,6 +344,14 @@ def collect_all(species, moves, trans):
             return False
         return True
 
+    # PokeAPI chain → dex 단위 진화 체인 매핑 (pvpoke 가 안 잡는 케이스 백필용)
+    pa_dex_to_chain = trans.get("evolution_chain") or {}
+    pa_chains_by_id = trans.get("chains_by_id") or {}
+    pa_species_ko = trans.get("species") or {}
+    # dex → sid (gamemaster 의 base form 만)
+    pa_dex_to_sid = {p["dex"]: p["speciesId"] for p in gm["pokemon"]
+                     if p.get("released", True) and "_" not in p["speciesId"]}
+
     def evolution_chain(sid: str) -> list[str]:
         """[base, ..., current] — 진화 사슬 (현재 포함)."""
         chain = [sid]
@@ -353,7 +361,19 @@ def collect_all(species, moves, trans):
             cur = parent_map[cur]
             chain.append(cur)
             seen.add(cur)
-        return list(reversed(chain))
+        chain = list(reversed(chain))
+        # PokeAPI 백필 — pvpoke chain 이 단일 종으로 끝나면 PokeAPI 진화 chain 사용
+        if len(chain) == 1 and sid in species:
+            dex = species[sid].get("dex")
+            chain_id = pa_dex_to_chain.get(str(dex)) if dex else None
+            if chain_id is not None:
+                pa_dexes = pa_chains_by_id.get(str(chain_id)) or []
+                if len(pa_dexes) > 1:
+                    pa_chain_sids = [pa_dex_to_sid.get(d) for d in pa_dexes if d in pa_dex_to_sid]
+                    pa_chain_sids = [s for s in pa_chain_sids if s]
+                    if sid in pa_chain_sids and len(pa_chain_sids) > 1:
+                        return pa_chain_sids
+        return chain
 
     # 종 메타 + 매치업 캐시
     species_out: dict[str, dict] = {}
@@ -680,8 +700,43 @@ def collect_all(species, moves, trans):
         base = re.sub(r"_(mega(_[xyz])?|primal|shadow)$", "", sid)
         if base != sid and base in family_of:
             family_of[sid] = family_of[base]
+
+    # 4차: PokeAPI evolution_chain 으로 family=None 종 백필
+    # (페라페 chatot 같이 pvpoke family=None 인 단일 종도 dex 단위 chain_id 매핑)
+    chains_by_id = trans.get("chains_by_id") or {}
+    dex_to_chain = trans.get("evolution_chain") or {}
+    for p in gm["pokemon"]:
+        sid = p["speciesId"]
+        if sid in family_of:
+            continue
+        dex = p.get("dex")
+        if dex is not None and str(dex) in dex_to_chain:
+            family_of[sid] = f"PA_CHAIN_{dex_to_chain[str(dex)]}"
         else:
             family_of[sid] = sid
+
+    # 5차: 같은 PokeAPI chain 안의 sid 들 family 통일 — pvpoke family 가 다른 cohort 와 섞일 수도 있음.
+    # 같은 chain 의 mem 들이 다른 family 에 흩어진 경우, 가장 많이 쓰인 family 로 통일.
+    if dex_to_chain:
+        from collections import Counter
+        chain_to_sids: dict[int, list[str]] = defaultdict(list)
+        for p in gm["pokemon"]:
+            sid = p["speciesId"]
+            dex = p.get("dex")
+            if dex is not None and str(dex) in dex_to_chain:
+                chain_to_sids[int(dex_to_chain[str(dex)])].append(sid)
+        for chain_id, sids in chain_to_sids.items():
+            if len(sids) <= 1:
+                continue
+            # 이 chain 의 sid 들이 같은 family 에 들어있는지
+            fids = [family_of.get(s) for s in sids if s in family_of]
+            cnt = Counter(fids)
+            if len(cnt) > 1:
+                # 가장 많이 쓰인 family 로 통일 (PA_CHAIN_X 보다 pvpoke family 우선)
+                non_pa = [f for f in fids if f and not f.startswith("PA_CHAIN_")]
+                target = Counter(non_pa).most_common(1)[0][0] if non_pa else cnt.most_common(1)[0][0]
+                for s in sids:
+                    family_of[s] = target
 
     family_members: dict[str, list[str]] = defaultdict(list)
     for sid, fid in family_of.items():

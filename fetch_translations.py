@@ -35,12 +35,27 @@ def fetch_csv(name: str) -> list[dict[str, str]]:
 def main() -> None:
     print("[translations] PokeAPI CSV 다운로드")
 
-    # 종 -- pokemon_species (id, identifier) + pokemon_species_names (ko name)
+    # 종 -- pokemon_species (id, identifier, evolves_from_species_id, evolution_chain_id) + names
     species_meta = fetch_csv("pokemon_species.csv")
     species_names = fetch_csv("pokemon_species_names.csv")
 
-    # id → identifier 매핑 (id 가 곧 dex 번호)
+    # id → identifier (= dex 매핑)
     sp_by_id = {row["id"]: row["identifier"] for row in species_meta}
+    # 진화 정보 — 부모/체인
+    evolves_from: dict[int, int] = {}
+    evolution_chain: dict[int, int] = {}  # dex → chain_id
+    for row in species_meta:
+        try:
+            dex = int(row["id"])
+            parent = row.get("evolves_from_species_id") or ""
+            chain = row.get("evolution_chain_id") or ""
+            if parent.isdigit():
+                evolves_from[dex] = int(parent)
+            if chain.isdigit():
+                evolution_chain[dex] = int(chain)
+        except Exception:
+            continue
+
     species: dict[str, dict[str, str]] = {}
     for row in species_names:
         sid = row["pokemon_species_id"]
@@ -52,6 +67,38 @@ def main() -> None:
             "ko": row["name"],
             "en": sp_by_id[sid].replace("-", " ").title(),
         }
+
+    # 폼 한글 — pokemon_form_names (form_name = "메가", "원시" 등)
+    pokemon_forms = fetch_csv("pokemon_forms.csv")
+    pokemon_form_names = fetch_csv("pokemon_form_names.csv")
+    # form_id → species dex 매핑 (pokemon_forms.pokemon_id 로 species 찾기)
+    pokemon_csv = fetch_csv("pokemon.csv")
+    poke_to_species = {row["id"]: row["species_id"] for row in pokemon_csv}
+    form_to_species = {
+        row["id"]: poke_to_species.get(row["pokemon_id"], "")
+        for row in pokemon_forms
+    }
+    forms_ko: dict[str, str] = {}  # form_identifier → 한글 라벨 (예: "alolan" → "알로라")
+    for row in pokemon_form_names:
+        if row["local_language_id"] != KO_LANG:
+            continue
+        fid = row["pokemon_form_id"]
+        form = next((f for f in pokemon_forms if f["id"] == fid), None)
+        if not form:
+            continue
+        form_ident = form.get("form_identifier", "").strip()
+        if not form_ident:
+            continue
+        # 폼 라벨만 뽑기 (예: "초목도롱" 그대로)
+        if row["form_name"] and form_ident not in forms_ko:
+            forms_ko[form_ident] = row["form_name"]
+
+    # 진화 체인 — chain_id → [dex,...]
+    chains_by_id: dict[int, list[int]] = {}
+    for dex, cid in evolution_chain.items():
+        chains_by_id.setdefault(cid, []).append(dex)
+    for cid in chains_by_id:
+        chains_by_id[cid].sort()
 
     # 기술 -- moves (id, identifier) + move_names
     moves_meta = fetch_csv("moves.csv")
@@ -87,13 +134,20 @@ def main() -> None:
     }
 
     out = {
-        "species": species,           # by dex (id 가 곧 dex)
-        "moves": moves,               # by pvpoke move_id
+        "species": species,                       # by dex (id 가 곧 dex)
+        "moves": moves,                           # by pvpoke move_id
         "types_ko": types_ko,
+        "forms_ko": forms_ko,                     # form_identifier → 한글 (예: "alolan" → "알로라")
+        "evolution_chain": evolution_chain,       # dex → chain_id
+        "evolves_from": evolves_from,             # dex → 부모 dex (있으면)
+        "chains_by_id": chains_by_id,             # chain_id → [dex,...] 체인 멤버
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[translations] 완료: 종 {len(species)} / 기술 {len(moves)} → {OUT}")
+    print(f"[translations] 완료:")
+    print(f"  종 {len(species)} / 기술 {len(moves)}")
+    print(f"  폼 {len(forms_ko)} / 진화체인 {len(chains_by_id)} / 부모 정보 {len(evolves_from)}")
+    print(f"  → {OUT}")
 
 
 if __name__ == "__main__":
