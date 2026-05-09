@@ -19,6 +19,27 @@
       "rank": 1,
       "source": "broccoalri / pvpoke #40",
       "note": "신오컵에서 강력한 picks. 노말+물 듀얼타입 활용"
+    },
+    "chatot": {
+      "rank": 5,
+      "source": "broccoalri 채널 신오컵",
+      "note": "페라페 — 노말/비행. 단일 종이라 family 정보 X. 신오컵에서 자주 등장"
+    }
+  },
+
+  "equinox_1500": {
+    "chatot": {
+      "rank": 1,
+      "source": "pvpoke #68 (cutoff 100 통과)",
+      "note": "페라페 이쿼녹스컵 — 노말/비행. 페어리/풀에 강함"
+    }
+  },
+
+  "laic2025_1500": {
+    "chatot": {
+      "rank": 1,
+      "source": "pvpoke #74 (LAIC 2025 메타)",
+      "note": "페라페 LAIC 2025 — 노말/비행 픽"
     }
   },
 

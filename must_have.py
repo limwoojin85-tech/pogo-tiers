@@ -23,7 +23,7 @@ TRANS_FILE = ROOT / "data" / "translations.json"
 OUT = ROOT / "out"
 OUT.mkdir(exist_ok=True)
 
-PVP_TOP_N = 50        # 컵 niche 메타까지 잡기 (비버통 신오컵 #40 등 — 유튜브 1티어 분석 반영)
+PVP_TOP_N = 100       # 컵 niche 메타까지 잡기 (페라페 이쿼녹스 #68, 비버통 신오 #40 등)
 RAID_TOP_N = 10       # 원래 8 → 10
 ESSENTIAL_PVP_RANK = 5
 ESSENTIAL_RAID_RANK = 5
