@@ -650,7 +650,9 @@ class OverlayService : Service() {
     private fun showDebugOcrInfo() {
         val msg = buildString {
             append("실패 사유: ${PogoOCR.lastFailReason.ifEmpty { "(성공)" }}\n\n")
-            append("=== 라틴 OCR ===\n")
+            append("=== 막대/별 분석 ===\n")
+            append(com.woojin.pokemanager.ocr.BarGraphAnalyzer.lastDebugInfo.ifEmpty { "(분석 안 됨)" })
+            append("\n\n=== 라틴 OCR ===\n")
             append(PogoOCR.lastOcrLatin.ifEmpty { "(비어있음)" })
             append("\n\n=== 한글 OCR ===\n")
             append(PogoOCR.lastOcrKorean.ifEmpty { "(비어있음)" })
