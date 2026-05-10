@@ -377,6 +377,9 @@ class OverlayService : Service() {
         val tvCP = resultView!!.findViewById<TextView>(R.id.tvCP)
         val tvIV = resultView!!.findViewById<TextView>(R.id.tvIV)
         val tvLeague = resultView!!.findViewById<TextView>(R.id.tvLeague)
+        val tvCandidates = resultView!!.findViewById<TextView>(R.id.tvCandidates)
+        val etDust = resultView!!.findViewById<EditText>(R.id.etDust)
+        val btnRecalc = resultView!!.findViewById<Button>(R.id.btnRecalc)
         val btnSave = resultView!!.findViewById<Button>(R.id.btnSave)
         val btnClose = resultView!!.findViewById<Button>(R.id.btnClose)
 
@@ -391,19 +394,41 @@ class OverlayService : Service() {
         tvCP.text = "CP ${data.cp}  HP ${data.hp}" +
             (if (data.dustCost > 0) "  먼지 ${data.dustCost}" else "")
 
-        if (ivResults.isEmpty()) {
-            tvIV.text = "IV 계산 불가\n(포켓몬 데이터 없음)"
-        } else {
-            val top = ivResults.first()
-            val minPerf = ivResults.last().perfection
-            val maxPerf = top.perfection
-            tvIV.text = buildString {
-                append("Atk ${top.atkIV} / Def ${top.defIV} / Sta ${top.stamIV}\n")
-                append("%.1f%%".format(maxPerf * 100))
-                if (ivResults.size > 1) append(" ~ %.1f%%".format(minPerf * 100))
-                append("  (${ivResults.size}가지 가능)\n")
-                append("Lv %.1f".format(top.level))
+        // IV 표시 + 후보 list — 함수로 빼서 재계산 시 재사용
+        renderIvAndCandidates(tvIV, tvCandidates, ivResults, data)
+
+        // 사용자가 별가루 입력 + 재계산 → 후보 좁히기
+        // detail 화면엔 별가루 표시 안 됨. "강화" 메뉴 들어가면 보임 — 사용자가 그것 보고 입력.
+        if (data.dustCost > 0) {
+            etDust.setText(data.dustCost.toString())
+        }
+        btnRecalc.setOnClickListener {
+            val dustInput = etDust.text.toString().trim().toIntOrNull() ?: 0
+            if (dustInput <= 0 || species == null) {
+                Toast.makeText(this, "별가루 숫자 입력 필요", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
             }
+            val recalc = IVCalculator.calculate(
+                species.atk, species.def, species.sta,
+                data.cp, data.hp, dustInput,
+                data.isShadow, data.isPurified
+            )
+            renderIvAndCandidates(tvIV, tvCandidates, recalc, data.copy(dustCost = dustInput))
+            // 결정 라벨 + PvP 도 다시
+            val pvp = if (recalc.isNotEmpty()) {
+                val top = recalc.first()
+                PvPRanker.rankAll(species.atk, species.def, species.sta, top.atkIV, top.defIV, top.stamIV)
+            } else emptyList()
+            tvLeague.text = pvp.joinToString("\n") { "${it.league}: 순위 ${it.rank} (CP ${it.bestCP})" }
+            if (recalc.isNotEmpty()) {
+                val top = recalc.first()
+                val meta = GameMasterRepo.meta(species.id)
+                val gc = GameMasterRepo.classifyGroup(species.id)
+                val dec = BucketClassifier.classify(species.id, top.atkIV, top.defIV, top.stamIV, data.cp, meta, gc)
+                tvLeague.text = (tvLeague.text?.toString().orEmpty() +
+                    "\n\n📋 결정: ${dec.bucket.label}\n${dec.reason}").trimStart()
+            }
+            Toast.makeText(this, "재계산 — 후보 ${recalc.size}개", Toast.LENGTH_SHORT).show()
         }
 
         if (pvpResults.isNotEmpty()) {
@@ -492,6 +517,41 @@ class OverlayService : Service() {
                 delay(1500L)
                 removeResultView()
             }
+        }
+    }
+
+    // IV + 후보 list 렌더링 — showResult 와 재계산 둘 다에서 호출
+    private fun renderIvAndCandidates(
+        tvIV: TextView, tvCandidates: TextView,
+        ivResults: List<com.woojin.pokemanager.calc.IVResult>,
+        data: com.woojin.pokemanager.ocr.PogoScreenData
+    ) {
+        if (ivResults.isEmpty()) {
+            tvIV.text = "IV 계산 불가\n(포켓몬 데이터 없음)"
+            tvCandidates.text = ""
+            return
+        }
+        val top = ivResults.first()
+        val minPerf = ivResults.last().perfection
+        val maxPerf = top.perfection
+        tvIV.text = buildString {
+            append("Atk ${top.atkIV} / Def ${top.defIV} / Sta ${top.stamIV}\n")
+            append("%.1f%%".format(maxPerf * 100))
+            if (ivResults.size > 1) append(" ~ %.1f%%".format(minPerf * 100))
+            append("  (${ivResults.size}가지 가능)\n")
+            append("Lv %.1f".format(top.level))
+            if (data.dustCost <= 0 && ivResults.size > 3) {
+                append("\n⚠ 별가루 입력하면 후보 좁아짐")
+            }
+        }
+        // 후보 list — 최대 30개까지 표시
+        tvCandidates.text = buildString {
+            append("후보 (perfection 순):\n")
+            ivResults.take(30).forEach { r ->
+                append("  Lv %4.1f  %2d/%2d/%2d  %5.1f%%\n".format(
+                    r.level, r.atkIV, r.defIV, r.stamIV, r.perfection * 100))
+            }
+            if (ivResults.size > 30) append("  … 외 ${ivResults.size - 30}개\n")
         }
     }
 
