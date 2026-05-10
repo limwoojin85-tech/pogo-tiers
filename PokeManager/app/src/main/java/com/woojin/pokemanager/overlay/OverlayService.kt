@@ -452,14 +452,32 @@ class OverlayService : Service() {
         } else {
             val top = ivResults.first()
             val pct = (top.perfection * 100)
-            tvIV.text = "%.0f%%".format(pct)
-            tvIvBreakdown.text = "(${top.atkIV}-${top.defIV}-${top.stamIV})"
-            tvCpLv.text = "CP ${data.cp}, Lv %.1f".format(top.level)
+            // 정직한 표시 — 후보 수에 따라 신뢰도 다르게:
+            // 1~3개 = 확정 (정확 IV 표시), 4~15개 = 추정 (~XX%), 15+ = "?%" (조사하기 필요)
+            val confident = ivResults.size <= 3
+            val somewhatConfident = ivResults.size <= 15
+            tvIV.text = when {
+                confident -> "%.0f%%".format(pct)
+                somewhatConfident -> "~%.0f%%".format(pct)
+                else -> "?%"
+            }
+            tvIvBreakdown.text = when {
+                confident -> "(${top.atkIV}-${top.defIV}-${top.stamIV})"
+                somewhatConfident -> "(추정 ${top.atkIV}-${top.defIV}-${top.stamIV})"
+                else -> "(${ivResults.size}개 후보)"
+            }
+            tvCpLv.text = "CP ${data.cp}" + if (confident) ", Lv %.1f".format(top.level) else ""
 
-            // 리그 한 줄씩 — leagueCap 으로 매칭 (1500/2500/MAX)
-            renderLeagueLine(tvLeagueGL, "🏆", pvpResults.find { it.leagueCap == 1500 })
-            renderLeagueLine(tvLeagueUL, "🥇", pvpResults.find { it.leagueCap == 2500 })
-            renderLeagueLine(tvLeagueML, "🥈", pvpResults.find { it.leagueCap == Int.MAX_VALUE })
+            // 리그 정보는 IV 확정 (후보 1~3개) 일 때만 — 그 외엔 부정확하니 숨김
+            if (ivResults.size <= 3) {
+                renderLeagueLine(tvLeagueGL, "🏆", pvpResults.find { it.leagueCap == 1500 })
+                renderLeagueLine(tvLeagueUL, "🥇", pvpResults.find { it.leagueCap == 2500 })
+                renderLeagueLine(tvLeagueML, "🥈", pvpResults.find { it.leagueCap == Int.MAX_VALUE })
+            } else {
+                tvLeagueGL.visibility = View.GONE
+                tvLeagueUL.visibility = View.GONE
+                tvLeagueML.visibility = View.GONE
+            }
 
             // 결정 (보관/송출/레이드 등) — bucket classification
             val meta = GameMasterRepo.meta(species.id)
@@ -473,19 +491,23 @@ class OverlayService : Service() {
                              decision.bucket == BucketClassifier.Bucket.TRANSFER_DUP
 
             tvHint.text = buildString {
-                append(decision.bucket.label)
-                // 막대 분석 결과 (사용자가 막대 잘 잡혔는지 확인)
-                if (data.ivBarsAtk != null) {
-                    append(" • 막대 ${data.ivBarsAtk}/${data.ivBarsDef}/${data.ivBarsSta}")
-                    if (data.starsLit != null) append(" ★$data.starsLit")
+                if (ivResults.size <= 3) {
+                    // 확정 — 결정 라벨 표시
+                    append(decision.bucket.label)
+                    if (data.ivBarsAtk != null) {
+                        append(" • 막대 ${data.ivBarsAtk}/${data.ivBarsDef}/${data.ivBarsSta}")
+                    }
                 } else {
-                    append(" • 막대 분석 실패")
-                }
-                if (ivResults.size > 5) {
-                    append(" (${ivResults.size}개 후보)")
+                    // 부정확 — 조사하기 안내
+                    append("⚠ ${ivResults.size}개 후보 — 조사하기 들어가면 정확")
                 }
             }
-            tvHint.setTextColor(if (isTransfer) 0xFFD32F2F.toInt() else 0xFF388E3C.toInt())
+            tvHint.setTextColor(when {
+                ivResults.size > 15 -> 0xFFFF6F00.toInt()  // 주황 — 모름
+                ivResults.size > 3 -> 0xFFFF9800.toInt()    // 주황 옅음 — 추정
+                isTransfer -> 0xFFD32F2F.toInt()
+                else -> 0xFF388E3C.toInt()
+            })
 
             // 방출 추천 + 자동 스와이프 중 + pauseOnTransfer ON → 일시정지 + 알림
             if (isTransfer && AutoSwipeService.isSwiping && pauseOnTransfer) {
@@ -539,12 +561,13 @@ class OverlayService : Service() {
         windowManager?.addView(resultView, params)
         resultVisible = true
 
-        // 카드 자동 닫힘 — 짧게 (autoScan 이면 0.8s, 그 외 4s)
-        // 옛 카드 빨리 사라져야 다음 swipe 새 카드 떠도 위치/시각 헷갈림 X
-        // 방출 추천 (빨강) 만 자동 닫기 X — 사용자가 결정해야
+        // 카드 자동 닫힘
+        // - 자동 모드: 2초 (사용자가 보고 다음 swipe 갈 시간)
+        // - 수동: 5초
+        // - 방출 추천 (빨강): 자동 닫기 X
         val isTransferShown = tvHint.currentTextColor == 0xFFD32F2F.toInt()
         if (!isTransferShown) {
-            val ms = if (autoScan) 800L else 4000L
+            val ms = if (autoScan) 2000L else 5000L
             scope.launch { delay(ms); removeResultView() }
         }
     }
