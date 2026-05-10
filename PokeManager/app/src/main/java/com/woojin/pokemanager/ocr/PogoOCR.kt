@@ -25,6 +25,9 @@ object PogoOCR {
     // 한글 OCR — 포켓몬 이름 인식 (한국어 모델)
     private val koreanRecognizer = TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
 
+    // species 한글명 set — OverlayService 에서 GameMasterRepo 로 채움. 이름 추출 시 이 set 와 매칭.
+    @Volatile var speciesNamesKo: Set<String> = emptySet()
+
     // 마지막 OCR 결과 — 분석 실패 시 디버그용 (사용자가 정보 제공할 수 있게)
     @Volatile var lastOcrLatin: String = ""
     @Volatile var lastOcrKorean: String = ""
@@ -105,47 +108,57 @@ object PogoOCR {
         )
     }
 
-    // 한글 이름 추출 — 한글이 포함된 라인 중 가장 길고 (5자 이내) 숫자/특수문자 적은 것
-    // 추출 후 한글만 남겨서 정제 (연필 아이콘 ✏, 공백, 기호 제거 → "화살꼬빈 ✏" → "화살꼬빈")
+    // 한글 이름 추출 — speciesNamesKo set 와 매칭되는 단어만 인정.
+    // detail 화면 하단 "이 망키(을)를 잡은 날과 장소는 ... 대한민국, 인천광역시" 같은 false positive 차단.
+    // ML Kit 가 "썬더라이" 를 "썬더" 로 짧게 자르는 경우 대비 — startsWith 매칭도 시도.
     private fun extractKoreanName(lines: List<String>): String? {
+        val names = speciesNamesKo
+        if (names.isEmpty()) {
+            // DB 미초기화 — 옛 fallback (한글 비율 가장 높은 라인)
+            return extractKoreanNameLoose(lines)
+        }
+        val koPattern = Regex("[가-힣]")
+        for (rawLine in lines) {
+            if (!koPattern.containsMatchIn(rawLine)) continue
+            // 한글만 남김
+            val ko = rawLine.filter { it.code in 0xAC00..0xD7A3 }
+            if (ko.length < 2) continue
+
+            // 1) 정확 매칭
+            if (ko in names) return ko
+            // 2) species name 이 라인 안에 포함됨 (예: "화살꼬빈 ✏" → ko="화살꼬빈" 매칭)
+            //    또는 ko 가 species name 의 일부 (예: ko="대한민국인천광역시" → no match)
+            val exactSubstring = names.firstOrNull { it.length >= 2 && ko.contains(it) }
+            if (exactSubstring != null) return exactSubstring
+            // 3) species name 이 ko 로 시작 (예: ko="썬더" → "썬더라이" / "썬더볼트" 후보)
+            //    가장 짧은 매칭 선택 (오인식 방지)
+            val startsWith = names.filter { it.startsWith(ko) && it.length <= ko.length + 4 }
+                .minByOrNull { it.length }
+            if (startsWith != null) return startsWith
+        }
+        return null
+    }
+
+    // 옛 fallback (DB 없을 때만)
+    private fun extractKoreanNameLoose(lines: List<String>): String? {
         val koPattern = Regex("[가-힣]")
         val candidates = lines.filter { line ->
             koPattern.containsMatchIn(line)
                 && line.length in 2..15
-                && !line.contains(Regex("""\d{2,}"""))    // 숫자 너무 많은 건 제외 (CP 등)
-                // PokeManager 자체 UI 텍스트 차단 (앱 하나 모드 잘못 선택 시 false-name 방지)
-                && !line.contains("캡처") && !line.contains("오버레이")
-                && !line.contains("포고만") && !line.contains("앱하나")
-                && !line.contains("PokeManager") && !line.contains("pokemanager")
-                // 자기 result overlay 의 텍스트 (자기 자신 OCR 노이즈 방지)
-                && !line.contains("포켓몬데이터")
-                && !line.contains("데이터없음") && !line.contains("데이터 없음")
-                && !line.contains("계산불가") && !line.contains("계산 불가")
-                && !line.contains("결정:") && !line.contains("리그")
-                && !line.contains("순위") && !line.contains("저장")
+                && !line.contains(Regex("""\d{2,}"""))
         }
-        // 한글 비율 높은 순
-        val raw = candidates.maxByOrNull { line ->
-            val koCount = line.count { it.code in 0xAC00..0xD7A3 }
-            koCount * 100 - line.length  // 한글 많고 짧을수록 높음
-        } ?: return null
-
-        // 한글만 남김 — "화살꼬빈 ✏" → "화살꼬빈"
+        val raw = candidates.maxByOrNull { it.count { c -> c.code in 0xAC00..0xD7A3 } } ?: return null
         val cleaned = raw.filter { it.code in 0xAC00..0xD7A3 }
-        return if (cleaned.length >= 2) cleaned else raw.trim().takeIf { it.isNotEmpty() }
+        return if (cleaned.length >= 2) cleaned else null
     }
 
     private fun extractCP(lines: List<String>): Int? {
-        // CP NNN 또는 CP: NNN 패턴
+        // CP NNN / CP: NNN / cP382 / cp382 — "CP" 키워드 + 숫자 결합 형태만 인정
+        // detail 화면 상단의 "CP382" 만 매칭. 사탕 ("27") / 별가루 ("2,500") false-positive 방지.
         for (line in lines) {
-            val m = Regex("""(?i)cp\s*[:\-]?\s*(\d{1,5})""").find(line)
-            if (m != null) return m.groupValues[1].toIntOrNull()
-        }
-        // 첫 번째 큰 숫자 (보통 상단에 위치)
-        for (line in lines.take(5)) {
-            val m = Regex("""^\d{1,5}$""").find(line.trim())
+            val m = Regex("""(?i)\bcp\s*[:\-]?\s*(\d{1,5})\b""").find(line)
             if (m != null) {
-                val v = m.value.toInt()
+                val v = m.groupValues[1].toIntOrNull() ?: continue
                 if (v in 10..10000) return v
             }
         }
@@ -153,14 +166,25 @@ object PogoOCR {
     }
 
     private fun extractHP(lines: List<String>): Int? {
+        // 1순위: "HP" 단어가 같은 라인에 있는 X/Y 패턴 (예: "78 / 78 HP")
         for (line in lines) {
-            // "HP NNN/NNN" 또는 "NNN / NNN HP" 패턴
+            if (!line.contains("HP", ignoreCase = true)) continue
             val m = Regex("""(\d{1,4})\s*/\s*(\d{1,4})""").find(line)
-            if (m != null) return m.groupValues[2].toIntOrNull()
+            if (m != null) {
+                val cur = m.groupValues[1].toIntOrNull() ?: continue
+                val max = m.groupValues[2].toIntOrNull() ?: continue
+                // 풀 hp 일 때 cur == max. 둘 다 같고 1~9999 범위
+                if (max in 1..9999 && cur <= max) return max
+            }
         }
+        // 2순위: "X / Y" 단독 패턴 — 단 두 숫자 동일 (포고 detail 의 풀체력)
         for (line in lines) {
-            val m = Regex("""(?i)hp\s*[:\-]?\s*(\d{1,4})""").find(line)
-            if (m != null) return m.groupValues[1].toIntOrNull()
+            val m = Regex("""^\s*(\d{1,4})\s*/\s*(\d{1,4})\s*HP?\s*$""", RegexOption.IGNORE_CASE).find(line)
+            if (m != null) {
+                val cur = m.groupValues[1].toIntOrNull() ?: continue
+                val max = m.groupValues[2].toIntOrNull() ?: continue
+                if (max in 1..9999 && cur == max) return max
+            }
         }
         return null
     }
@@ -170,34 +194,31 @@ object PogoOCR {
             3000,3500,4000,4500,5000,6000,7000,8000,9000,10000,
             11000,12000,13000,14000,15000,16000,17000,18000,19000,20000)
 
-        // 1단계: 각 라인 + 라인 결합 (강화 버튼 옆 작은 박스의 "2,500" 처리)
-        // OCR 가 "2,500" 을 "2,500" 또는 "2 500" 또는 "2.500" 으로 잡을 수 있음
-        for (rawLine in lines) {
-            // 콤마/점/공백 제거 후 숫자 검사
-            val cleaned = rawLine.replace(Regex("""[,.\s](?=\d{3})"""), "")
-            val nums = Regex("""\d{3,6}""").findAll(cleaned).map { it.value.toInt() }.toList()
-            for (n in nums) {
-                if (n in dustValues) return n
-            }
-            // 또한 별의모래 (총 보유량 — 1,687,937 같은 큰 수) 다음/이전 라인의 작은 수도 검사
+        // 전체 텍스트 결합 → 콤마/점/공백 (천단위 구분자) 제거 → 숫자 모두 추출
+        // detail 화면 강화 버튼 옆 "2,500" 이 OCR 결과에서 "2,500" / "2 500" / "2500" 어느 형태든 매칭
+        val whole = lines.joinToString(" ")
+        // 천단위 구분 (숫자, 정확히 3숫자 따라옴) 제거
+        val cleaned = whole.replace(Regex("""(?<=\d)[,.\s](?=\d{3}(?!\d))"""), "")
+        val nums = Regex("""\d{2,7}""").findAll(cleaned).map { it.value.toInt() }.toList()
+
+        // 별의모래 보유량 (예: 1,687,937 → 1687937) 제외
+        // dustValues 에 정확 일치하는 가장 작은 수 우선 (사탕 수량 false-positive 방지: 261, 327, 19, 27, 42 같은 건 dustValues 에 없음)
+        val candidates = nums.filter { it in dustValues && it < 100_000 }
+        if (candidates.isEmpty()) return null
+
+        // 강화 단어 근처 우선 — "강화" 단어가 있는 라인 + ±2줄 안에 있는 dust 값
+        for (i in lines.indices) {
+            if (!lines[i].contains("강화") && !lines[i].contains("power", true)) continue
+            val window = (maxOf(0, i-1)..minOf(lines.lastIndex, i+2))
+                .joinToString(" ") { lines[it] }
+                .replace(Regex("""(?<=\d)[,.\s](?=\d{3}(?!\d))"""), "")
+            val winNums = Regex("""\d{2,7}""").findAll(window).map { it.value.toInt() }.toList()
+            val winCand = winNums.firstOrNull { it in dustValues && it < 100_000 }
+            if (winCand != null) return winCand
         }
 
-        // 2단계: 강화 버튼 영역 — "강화" 단어 + 같은/다음 라인의 별가루 비용
-        // detail 화면 강화 버튼은 작아서 OCR 이 별도 라인으로 잡을 가능성. 인접 라인 페어 검사.
-        for (i in lines.indices) {
-            val line = lines[i]
-            if (line.contains("강화") || line.contains("power", true)) {
-                // 같은 + 인접 (전후 2줄) 검사
-                val window = (maxOf(0, i-1)..minOf(lines.lastIndex, i+2)).joinToString(" ") { lines[it] }
-                val cleaned = window.replace(Regex("""[,.\s](?=\d{3})"""), "")
-                val nums = Regex("""\d{3,6}""").findAll(cleaned).map { it.value.toInt() }.toList()
-                for (n in nums) {
-                    // 별의모래 총량 (보통 100k+) 은 dust 가 아님
-                    if (n in dustValues && n < 100000) return n
-                }
-            }
-        }
-        return null
+        // 강화 단어 매칭 실패 시 — 전체에서 가장 흔한 / 가장 작은 dust value
+        return candidates.minOrNull()
     }
 
     private fun extractName(lines: List<String>, cp: Int): String? {

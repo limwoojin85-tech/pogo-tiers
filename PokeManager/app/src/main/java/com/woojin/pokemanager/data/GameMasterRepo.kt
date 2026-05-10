@@ -3,6 +3,7 @@ package com.woojin.pokemanager.data
 import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.woojin.pokemanager.ocr.PogoOCR
 
 object GameMasterRepo {
 
@@ -27,6 +28,12 @@ object GameMasterRepo {
             val type = object : TypeToken<List<Species>>() {}.type
             speciesList = gson.fromJson(reader, type)
         }
+        // OCR 한글 이름 매칭용 set 주입 — false-positive ("대한민국..." 등) 차단용
+        // _shadow / _purified suffix 형태 species 는 base 만 (괄호 없는 nameKo 만) 추출
+        PogoOCR.speciesNamesKo = speciesList
+            .map { it.nameKo.substringBefore(" (").trim() }
+            .filter { it.length >= 2 }
+            .toSet()
 
         // 2. species_meta.json — 랭킹된 648 종 (옵션)
         runCatching {
