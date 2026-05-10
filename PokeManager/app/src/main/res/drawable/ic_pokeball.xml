@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monster ball — top: red (#EE1515), bottom: white, band: black, center button: white circle with black ring -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- White lower half (drawn first as full circle, red overlay covers top) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,2 A22,22 0 1 1 24,46 A22,22 0 1 1 24,2 Z" />
+
+    <!-- Red upper half: clip to top half via path -->
+    <path
+        android:fillColor="#EE1515"
+        android:pathData="M24,2 A22,22 0 0 1 46,24 L2,24 A22,22 0 0 1 24,2 Z" />
+
+    <!-- Black equator band -->
+    <path
+        android:fillColor="#1A1A1A"
+        android:pathData="M2,22 L46,22 L46,26 L2,26 Z" />
+
+    <!-- Center button: black outer ring -->
+    <path
+        android:fillColor="#1A1A1A"
+        android:pathData="M24,16 A8,8 0 1 1 24,32 A8,8 0 1 1 24,16 Z" />
+    <!-- Center button: white inner -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,19 A5,5 0 1 1 24,29 A5,5 0 1 1 24,19 Z" />
+
+    <!-- Outer black border -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1A1A1A"
+        android:strokeWidth="2"
+        android:pathData="M24,2 A22,22 0 1 1 24,46 A22,22 0 1 1 24,2 Z" />
+</vector>

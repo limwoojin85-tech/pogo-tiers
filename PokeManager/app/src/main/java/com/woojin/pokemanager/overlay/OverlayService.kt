@@ -33,9 +33,16 @@ class OverlayService : Service() {
         const val CHANNEL_ID = "pokemanager_overlay"
         const val NOTIF_ID = 1001
 
-        // 분할화면 모드: 0=전체, 1=상단/좌측, 2=하단/우측
+        // 분할화면 모드:
+        //  0 = 전체 / 단일 (앱 하나 모드 + 일반 화면)
+        //  1 = 상단 절반   2 = 하단 절반
+        //  3 = 좌측 절반   4 = 우측 절반
         var splitMode: Int = 0
         var isRunning = false
+
+        // 사용자가 매뉴얼로 선택한 캡처 모드 — "single" (앱 하나) / "full" (전체)
+        // single 일 땐 splitMode 무시 (이미 단일 앱만 캡처됨)
+        var captureMode: String = "full"
     }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -136,44 +143,104 @@ class OverlayService : Service() {
     }
 
     private fun getCropRect(bitmapWidth: Int, bitmapHeight: Int): Rect? {
+        // "앱 하나" 모드 — MediaProjection 이 단일 앱만 캡처 → 분할 무시
+        if (captureMode == "single") return null
         return when (splitMode) {
-            1 -> Rect(0, 0, bitmapWidth, bitmapHeight / 2)       // 상단 절반
-            2 -> Rect(0, bitmapHeight / 2, bitmapWidth, bitmapHeight)  // 하단 절반
+            1 -> Rect(0, 0, bitmapWidth, bitmapHeight / 2)            // 상단 절반
+            2 -> Rect(0, bitmapHeight / 2, bitmapWidth, bitmapHeight) // 하단 절반
+            3 -> Rect(0, 0, bitmapWidth / 2, bitmapHeight)            // 좌측 절반
+            4 -> Rect(bitmapWidth / 2, 0, bitmapWidth, bitmapHeight)  // 우측 절반
             else -> null  // 전체 화면
         }
     }
 
+    // 현재 splitMode 에서 분석된 결과는 어느 프로필로 저장? (분할화면당 계정 분리)
+    private fun currentProfile(): String = when (splitMode) {
+        1, 3 -> "split_a"  // 상단 / 좌측 = 계정 A
+        2, 4 -> "split_b"  // 하단 / 우측 = 계정 B
+        else -> "main"
+    }
+
+    // 분할 모드 자동 감지 — bitmap 의 가로/세로 비율로 판단
+    // 폴드 inner 펼친 상태(가로 길고) + 분할 캡처 시 좌/우 분할 우세
+    // 일반 폰 세로 + 분할 캡처 시 위/아래 분할 우세
+    private fun detectSplitOrientation(w: Int, h: Int): Boolean = w >= h  // true=좌우분할 모드
+
     // 자동 스캔: 1초마다 화면 캡처 → 포고 화면 감지 → 자동 분석
+    // 분할화면 모드일 때 — splitMode 가 0 (auto) 이면 양쪽 영역 다 시도해서 hit 한 쪽으로 라우팅
     private fun startAutoScan() {
         autoScanJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(1000)
                 try {
                     val bitmap = captureBitmap() ?: continue
-                    val crop = getCropRect(bitmap.width, bitmap.height)
-                    val src = if (crop != null)
-                        Bitmap.createBitmap(bitmap, crop.left, crop.top, crop.width(), crop.height())
-                    else bitmap
 
-                    // 빠른 텍스트 인식으로 포고 화면 여부 판단
-                    val data = PogoOCR.analyze(src, null) ?: continue
-                    val screenKey = "${data.cp}_${data.hp}_${data.dustCost}_${data.pokemonName}"
-
-                    // 같은 화면이면 다시 분석 안 함
-                    if (screenKey == lastAnalyzedText) continue
-                    lastAnalyzedText = screenKey
-
-                    if (data.cp > 0 && data.dustCost > 0) {
-                        withContext(Dispatchers.Main) {
-                            processResult(data)
-                        }
+                    // 캡처 mode 가 single 이면 그냥 전체 분석
+                    if (captureMode == "single") {
+                        analyzeRegion(bitmap, null, "main")
+                        continue
                     }
+
+                    // splitMode 가 명시 (1~4) 면 그 영역만
+                    if (splitMode in 1..4) {
+                        val crop = getCropRect(bitmap.width, bitmap.height)
+                        analyzeRegion(bitmap, crop, currentProfile())
+                        continue
+                    }
+
+                    // splitMode = 0 (auto) — 양쪽 다 시도. 둘 중 하나 hit 시 그쪽 프로필로 저장
+                    // bitmap 가로 방향이면 좌/우 분할, 아니면 위/아래 분할
+                    val landscape = detectSplitOrientation(bitmap.width, bitmap.height)
+                    val (rectA, rectB, profA, profB) = if (landscape) {
+                        Quad(
+                            Rect(0, 0, bitmap.width / 2, bitmap.height),
+                            Rect(bitmap.width / 2, 0, bitmap.width, bitmap.height),
+                            "split_a", "split_b"
+                        )
+                    } else {
+                        Quad(
+                            Rect(0, 0, bitmap.width, bitmap.height / 2),
+                            Rect(0, bitmap.height / 2, bitmap.width, bitmap.height),
+                            "split_a", "split_b"
+                        )
+                    }
+
+                    // 우선 전체 분석 시도 (분할 안 된 케이스 대비)
+                    if (analyzeRegion(bitmap, null, "main")) continue
+                    // 좌/상 → 우/하 순서
+                    if (analyzeRegion(bitmap, rectA, profA)) continue
+                    analyzeRegion(bitmap, rectB, profB)
                 } catch (_: Exception) {}
             }
         }
     }
 
-    private fun processResult(data: com.woojin.pokemanager.ocr.PogoScreenData) {
+    // 1 영역 분석. hit (PogoScreenData 반환) 했으면 true. lastAnalyzedText 로 중복 방지.
+    private suspend fun analyzeRegion(
+        bitmap: Bitmap, crop: Rect?, profile: String
+    ): Boolean {
+        val data = PogoOCR.analyze(bitmap, crop) ?: return false
+        if (data.cp <= 0) return false  // dust 는 optional 이라 cp 만 체크
+
+        val screenKey = "$profile|${data.cp}_${data.hp}_${data.pokemonName}"
+        if (screenKey == lastAnalyzedText) return true  // 같은 화면 — 처리는 skip 하지만 hit
+        lastAnalyzedText = screenKey
+
+        withContext(Dispatchers.Main) {
+            processResult(data, profile)
+        }
+        return true
+    }
+
+    // 4-tuple helper
+    private data class Quad(
+        val a: Rect, val b: Rect, val pa: String, val pb: String
+    )
+
+    private fun processResult(
+        data: com.woojin.pokemanager.ocr.PogoScreenData,
+        profile: String = "main"
+    ) {
         val species = GameMasterRepo.findByNameFuzzy(data.pokemonName)
 
         val ivResults = if (species != null) {
@@ -189,7 +256,7 @@ class OverlayService : Service() {
             PvPRanker.rankAll(species!!.atk, species.def, species.sta, top.atkIV, top.defIV, top.stamIV)
         } else emptyList()
 
-        showResult(data, ivResults, pvpResults)
+        showResult(data, ivResults, pvpResults, profile)
     }
 
     private fun showFab() {
@@ -228,21 +295,34 @@ class OverlayService : Service() {
                         windowManager?.updateViewLayout(fabView, params)
 
                         // FAB 위치로 분할화면 모드 자동 설정
+                        // 가로/세로 화면에 따라 좌/우 (3,4) 또는 위/아래 (1,2) 분할
+                        val screenW = resources.displayMetrics.widthPixels
                         val screenH = resources.displayMetrics.heightPixels
-                        splitMode = when {
-                            params.y < screenH * 0.4f -> 1
-                            params.y > screenH * 0.6f -> 2
-                            else -> 0
+                        val landscape = screenW >= screenH
+                        splitMode = if (landscape) {
+                            when {
+                                params.x < screenW * 0.35f -> 3   // 좌측
+                                params.x > screenW * 0.65f -> 4   // 우측
+                                else -> 0
+                            }
+                        } else {
+                            when {
+                                params.y < screenH * 0.35f -> 1   // 상단
+                                params.y > screenH * 0.65f -> 2   // 하단
+                                else -> 0
+                            }
                         }
                     }
                     MotionEvent.ACTION_UP -> {
                         if (Math.abs(e.rawX - touchX) < 10 && Math.abs(e.rawY - touchY) < 10) {
-                            // 탭: 수동 캡처 트리거
+                            // 탭: 수동 캡처 트리거 (현재 splitMode 의 영역 분석)
                             scope.launch(Dispatchers.IO) {
                                 val bitmap = captureBitmap() ?: return@launch
                                 val crop = getCropRect(bitmap.width, bitmap.height)
                                 val data = PogoOCR.analyze(bitmap, crop) ?: return@launch
-                                withContext(Dispatchers.Main) { processResult(data) }
+                                withContext(Dispatchers.Main) {
+                                    processResult(data, currentProfile())
+                                }
                             }
                         }
                     }
@@ -257,7 +337,8 @@ class OverlayService : Service() {
     private fun showResult(
         data: com.woojin.pokemanager.ocr.PogoScreenData,
         ivResults: List<com.woojin.pokemanager.calc.IVResult>,
-        pvpResults: List<com.woojin.pokemanager.calc.LeagueResult>
+        pvpResults: List<com.woojin.pokemanager.calc.LeagueResult>,
+        profile: String = "main"
     ) {
         removeResultView()
 
@@ -272,8 +353,15 @@ class OverlayService : Service() {
         val btnClose = resultView!!.findViewById<Button>(R.id.btnClose)
 
         val species = GameMasterRepo.findByNameFuzzy(data.pokemonName)
-        tvName.text = species?.nameKo ?: data.pokemonName.ifEmpty { "알 수 없음" }
-        tvCP.text = "CP ${data.cp}  HP ${data.hp}  먼지 ${data.dustCost}"
+        // 프로필 prefix — 분할화면 좌/우 어느 쪽에서 잡혔는지 표시
+        val profPrefix = when (profile) {
+            "split_a" -> "[A] "
+            "split_b" -> "[B] "
+            else -> ""
+        }
+        tvName.text = profPrefix + (species?.nameKo ?: data.pokemonName.ifEmpty { "알 수 없음" })
+        tvCP.text = "CP ${data.cp}  HP ${data.hp}" +
+            (if (data.dustCost > 0) "  먼지 ${data.dustCost}" else "")
 
         if (ivResults.isEmpty()) {
             tvIV.text = "IV 계산 불가\n(포켓몬 데이터 없음)"
@@ -336,11 +424,14 @@ class OverlayService : Service() {
                             cp = data.cp, hp = data.hp, dustCost = data.dustCost,
                             atkIV = top.atkIV, defIV = top.defIV, stamIV = top.stamIV,
                             level = top.level, perfection = top.perfection,
-                            isShadow = data.isShadow, isPurified = data.isPurified
+                            isShadow = data.isShadow, isPurified = data.isPurified,
+                            profile = profile
                         )
                     )
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(applicationContext, "저장됨", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(applicationContext,
+                            "저장됨 (${profPrefix.trim().ifEmpty { "main" }})",
+                            Toast.LENGTH_SHORT).show()
                         removeResultView()
                     }
                 }

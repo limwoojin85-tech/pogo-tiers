@@ -23,6 +23,32 @@
         android:layout_height="wrap_content"
         android:layout_marginBottom="32dp" />
 
+    <!-- 캡처 모드 선택 — 시작 전에 미리 결정 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="캡처 모드"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
+
+    <RadioGroup
+        android:id="@+id/rgCaptureMode"
+        android:layout_width="240dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginBottom="20dp">
+
+        <RadioButton
+            android:id="@+id/rbModeFull"
+            android:text="전체 화면 (분할화면 좌/우 동시 분석)"
+            android:checked="true" />
+
+        <RadioButton
+            android:id="@+id/rbModeSingle"
+            android:text="앱 하나만 (포고만 캡처)" />
+    </RadioGroup>
+
     <Button
         android:id="@+id/btnToggle"
         android:text="오버레이 시작"
@@ -40,9 +66,9 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
+        android:layout_marginTop="24dp"
         android:textSize="12sp"
         android:gravity="center"
-        android:text="오버레이 시작 후 분할화면에서 포고를 열면\n개체 화면에서 자동으로 IV가 표시됩니다" />
+        android:text="• 전체 화면 = 분할화면 좌/우 양쪽 다 분석 + 자동 [A]/[B] 프로필 분리\n• 앱 하나 = 포고만 캡처 (분할화면 OFF, 단일 계정)" />
 
 </LinearLayout>

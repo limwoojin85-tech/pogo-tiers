@@ -17,6 +17,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnToggle: Button
     private lateinit var tvStatus: TextView
+    private lateinit var rgCaptureMode: RadioGroup
 
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -34,10 +35,15 @@ class MainActivity : AppCompatActivity() {
 
         btnToggle = findViewById(R.id.btnToggle)
         tvStatus = findViewById(R.id.tvStatus)
+        rgCaptureMode = findViewById(R.id.rgCaptureMode)
 
         GameMasterRepo.load(this)
 
         btnToggle.setOnClickListener { toggleOverlay() }
+        rgCaptureMode.setOnCheckedChangeListener { _, checkedId ->
+            OverlayService.captureMode =
+                if (checkedId == R.id.rbModeSingle) "single" else "full"
+        }
         findViewById<Button>(R.id.btnMyPokemon).setOnClickListener {
             startActivity(Intent(this, MyPokemonActivity::class.java))
         }
@@ -57,6 +63,10 @@ class MainActivity : AppCompatActivity() {
             updateUI()
             return
         }
+
+        // 시작 직전 captureMode 확정
+        OverlayService.captureMode =
+            if (rgCaptureMode.checkedRadioButtonId == R.id.rbModeSingle) "single" else "full"
 
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "화면 위에 표시 권한을 허용해주세요", Toast.LENGTH_LONG).show()
@@ -83,7 +93,8 @@ class MainActivity : AppCompatActivity() {
     private fun updateUI() {
         if (OverlayService.isRunning) {
             btnToggle.text = "오버레이 중지"
-            tvStatus.text = "자동 분석 실행 중\n분할화면에서 포고 열면 자동으로 분석됩니다"
+            val mode = if (OverlayService.captureMode == "single") "앱 하나" else "전체 화면"
+            tvStatus.text = "자동 분석 실행 중 ($mode)\n포고 detail 열면 자동 분석됨"
         } else {
             btnToggle.text = "오버레이 시작"
             tvStatus.text = "중지됨"

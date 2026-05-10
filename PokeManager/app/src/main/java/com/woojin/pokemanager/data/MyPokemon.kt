@@ -20,5 +20,8 @@ data class MyPokemon(
     val isPurified: Boolean = false,
     val isShiny: Boolean = false,
     val notes: String = "",
-    val capturedAt: Long = System.currentTimeMillis()
+    val capturedAt: Long = System.currentTimeMillis(),
+    // ─── Profile (Account) — 분할화면에서 좌/우 각각 다른 계정으로 분리
+    // "main" = 기본, "split_a" = 좌/상, "split_b" = 우/하
+    val profile: String = "main"
 )
