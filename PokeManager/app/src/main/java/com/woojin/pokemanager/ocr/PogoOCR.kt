@@ -2,12 +2,15 @@ package com.woojin.pokemanager.ocr
 
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
+
+private const val TAG = "PokeManager-OCR"
 
 data class PogoScreenData(
     val pokemonName: String,
@@ -55,8 +58,14 @@ object PogoOCR {
         lastOcrKorean = koreanText
 
         val combined = "$latinText\n$koreanText"
+        Log.i(TAG, "===== analyze() bitmap=${src.width}x${src.height} =====")
+        Log.i(TAG, "LATIN OCR (${latinText.length} chars):")
+        latinText.lines().take(20).forEach { if (it.isNotBlank()) Log.i(TAG, "  $it") }
+        Log.i(TAG, "KOREAN OCR (${koreanText.length} chars):")
+        koreanText.lines().take(20).forEach { if (it.isNotBlank()) Log.i(TAG, "  $it") }
         if (combined.isBlank()) {
             lastFailReason = "OCR 결과 비어있음 (화면 캡처 실패 또는 빈 화면)"
+            Log.w(TAG, "FAIL: $lastFailReason")
             return null
         }
         // text-based parsing → CP/HP/이름/별가루
@@ -70,6 +79,13 @@ object PogoOCR {
         val appraisal = if (AppraisalAnalyzer.isAppraisalScreen(combined)) {
             AppraisalAnalyzer.analyze(combined)
         } else null
+
+        Log.i(TAG, "PARSED: name=${base.pokemonName} cp=${base.cp} hp=${base.hp} dust=${base.dustCost} " +
+                   "shadow=${base.isShadow} purified=${base.isPurified}")
+        Log.i(TAG, "BARS: atk=${bars?.atk} def=${bars?.def} sta=${bars?.sta} conf=${bars?.confidence}")
+        Log.i(TAG, "STAR: ${badge?.starsLit}")
+        Log.i(TAG, "APPRAISAL: tier=${appraisal?.tier} bestStat=${appraisal?.bestStat} statTier=${appraisal?.bestStatTier}")
+        Log.i(TAG, "BarGraphAnalyzer.lastDebugInfo: ${BarGraphAnalyzer.lastDebugInfo}")
 
         return base.copy(
             ivBarsAtk = bars?.atk,

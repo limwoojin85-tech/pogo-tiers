@@ -25,6 +25,7 @@ import com.woojin.pokemanager.data.MyPokemon
 import com.woojin.pokemanager.ocr.PogoOCR
 import com.woojin.pokemanager.swipe.AutoSwipeService
 import android.content.Intent
+import android.util.Log
 import kotlinx.coroutines.*
 
 class OverlayService : Service() {
@@ -311,11 +312,23 @@ class OverlayService : Service() {
             if (byStars.isNotEmpty()) ivResults = byStars
         }
 
+        Log.i("PokeManager-Overlay", "processResult species=${species?.id} candidates=${ivResults.size} " +
+            "first=${ivResults.firstOrNull()?.let { "${it.atkIV}-${it.defIV}-${it.stamIV}@${"%.0f".format(it.perfection*100)}%" }}")
+
         // detail 결과 캐시 — 곧이어 조사하기 화면 들어오면 이 캐시 + appraisal 결합
         if (species != null) {
             lastDetailData = data
             lastDetailIvResults = ivResults
             lastDetailSpecies = species
+        }
+
+        // canTrust = 막대 OR 조사하기 + 후보 ≤ 5. 그 외엔 카드 안 띄움 (자의적 결과 X).
+        val haveBars = data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null
+        val haveAppraisal = data.appraisal != null
+        val canTrust = (haveBars || haveAppraisal) && ivResults.size <= 5 && species != null
+        if (!canTrust) {
+            Log.i("PokeManager-Overlay", "SKIP card: canTrust=false (bars=$haveBars appraisal=$haveAppraisal cands=${ivResults.size})")
+            return
         }
 
         val pvpResults = if (ivResults.isNotEmpty()) {
