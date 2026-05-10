@@ -186,9 +186,8 @@ class OverlayService : Service() {
             while (isActive) {
                 delay(1000)
                 try {
-                    // 결과창 떠있는 동안엔 자동 스캔 중지 — 자기 자신 OCR 노이즈 방지
-                    if (resultVisible) continue
-
+                    // 결과창 떠있어도 polling 계속 — swipe 후 새 detail 화면 즉시 잡아야 함.
+                    // (lastAnalyzedText 캐시로 같은 화면 재분석은 차단됨)
                     val bitmap = captureBitmap() ?: continue
 
                     // 캡처 mode 가 single 이면 그냥 전체 분석
@@ -512,13 +511,12 @@ class OverlayService : Service() {
         windowManager?.addView(resultView, params)
         resultVisible = true
 
-        // 카드 자동 닫힘 (모든 모드)
-        // - 자동 + 자동저장 모드: 1.5초 (다음 마리 분석 빨리 가야)
-        // - 수동 모드: 6초 (사용자가 보고 다음 마리 가도록. 옛 카드 안 남게)
-        // - 방출 추천 (transfer 빨강): 자동 닫기 X (사용자가 수동 방출 결정해야)
+        // 카드 자동 닫힘 — 짧게 (autoScan 이면 0.8s, 그 외 4s)
+        // 옛 카드 빨리 사라져야 다음 swipe 새 카드 떠도 위치/시각 헷갈림 X
+        // 방출 추천 (빨강) 만 자동 닫기 X — 사용자가 결정해야
         val isTransferShown = tvHint.currentTextColor == 0xFFD32F2F.toInt()
         if (!isTransferShown) {
-            val ms = if (autoScan && autoSave) 1500L else 6000L
+            val ms = if (autoScan) 800L else 4000L
             scope.launch { delay(ms); removeResultView() }
         }
     }
