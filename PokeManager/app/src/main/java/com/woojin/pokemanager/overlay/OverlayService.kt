@@ -571,15 +571,8 @@ class OverlayService : Service() {
         windowManager?.addView(resultView, params)
         resultVisible = true
 
-        // 카드 자동 닫힘
-        // - 자동 모드: 2초 (사용자가 보고 다음 swipe 갈 시간)
-        // - 수동: 5초
-        // - 방출 추천 (빨강): 자동 닫기 X
-        val isTransferShown = tvHint.currentTextColor == 0xFFD32F2F.toInt()
-        if (!isTransferShown) {
-            val ms = if (autoScan) 2000L else 5000L
-            scope.launch { delay(ms); removeResultView() }
-        }
+        // 카드 자동 닫힘 제거 — 사용자가 카드 탭 / 새 마리 swipe 시 자동 갱신.
+        // 떴다 사라졌다 짜증 멈춤. 카드는 한 번 뜨면 다음 분석 결과 나올 때까지 유지.
     }
 
     private fun renderLeagueLine(tv: TextView, icon: String, league: com.woojin.pokemanager.calc.LeagueResult?) {
@@ -819,8 +812,8 @@ class OverlayService : Service() {
             resultView = null
         }
         resultVisible = false
-        // 같은 화면 다시 들어가면 또 분석되도록 cache 리셋
-        lastAnalyzedText = ""
+        // lastAnalyzedText 는 reset 안 함 — 같은 화면 polling 시 카드 다시 안 띄움
+        // (떴다 사라졌다 무한 루프 방지)
     }
 
     override fun onDestroy() {
