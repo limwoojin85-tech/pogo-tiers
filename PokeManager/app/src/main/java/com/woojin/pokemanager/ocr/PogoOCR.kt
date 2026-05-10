@@ -169,32 +169,37 @@ object PogoOCR {
     }
 
     // 한글 이름 추출 — speciesNamesKo set 와 매칭되는 단어만 인정.
-    // detail 화면 하단 "이 망키(을)를 잡은 날과 장소는 ... 대한민국, 인천광역시" 같은 false positive 차단.
-    // ML Kit 가 "썬더라이" 를 "썬더" 로 짧게 자르는 경우 대비 — startsWith 매칭도 시도.
+    // 문제: "이상해꽃" detail 인데 "이상해씨의 사탕XL" 라인이 먼저 와서 "이상해씨" 로 매칭되는 케이스.
+    // → Pass 1 (정확 매칭) 을 모든 라인에 먼저 적용 → 정확 매칭이 진짜 이름.
     private fun extractKoreanName(lines: List<String>): String? {
         val names = speciesNamesKo
-        if (names.isEmpty()) {
-            // DB 미초기화 — 옛 fallback (한글 비율 가장 높은 라인)
-            return extractKoreanNameLoose(lines)
-        }
-        val koPattern = Regex("[가-힣]")
+        if (names.isEmpty()) return extractKoreanNameLoose(lines)
+
+        // 사탕/별가루/장소 같은 noise 라인은 reject
+        val noiseKeywords = listOf("사탕", "별의", "모래", "잡은 날", "장소", "대한민국", "인천", "서울", "경기")
+
+        // Pass 1: 정확 매칭 (가장 신뢰 높음)
         for (rawLine in lines) {
-            if (!koPattern.containsMatchIn(rawLine)) continue
-            // 한글만 남김
+            if (noiseKeywords.any { rawLine.contains(it) }) continue
+            val ko = rawLine.filter { it.code in 0xAC00..0xD7A3 }
+            if (ko.length >= 2 && ko in names) return ko
+        }
+        // Pass 2: substring 매칭 (noise 라인 제외 후)
+        for (rawLine in lines) {
+            if (noiseKeywords.any { rawLine.contains(it) }) continue
             val ko = rawLine.filter { it.code in 0xAC00..0xD7A3 }
             if (ko.length < 2) continue
-
-            // 1) 정확 매칭
-            if (ko in names) return ko
-            // 2) species name 이 라인 안에 포함됨 (예: "화살꼬빈 ✏" → ko="화살꼬빈" 매칭)
-            //    또는 ko 가 species name 의 일부 (예: ko="대한민국인천광역시" → no match)
-            val exactSubstring = names.firstOrNull { it.length >= 2 && ko.contains(it) }
-            if (exactSubstring != null) return exactSubstring
-            // 3) species name 이 ko 로 시작 (예: ko="썬더" → "썬더라이" / "썬더볼트" 후보)
-            //    가장 짧은 매칭 선택 (오인식 방지)
-            val startsWith = names.filter { it.startsWith(ko) && it.length <= ko.length + 4 }
+            val match = names.firstOrNull { it.length >= 2 && ko.contains(it) }
+            if (match != null) return match
+        }
+        // Pass 3: startsWith (OCR 가 짧게 자른 경우 — "썬더" → "썬더라이")
+        for (rawLine in lines) {
+            if (noiseKeywords.any { rawLine.contains(it) }) continue
+            val ko = rawLine.filter { it.code in 0xAC00..0xD7A3 }
+            if (ko.length < 2) continue
+            val match = names.filter { it.startsWith(ko) && it.length <= ko.length + 4 }
                 .minByOrNull { it.length }
-            if (startsWith != null) return startsWith
+            if (match != null) return match
         }
         return null
     }
@@ -262,10 +267,13 @@ object PogoOCR {
             3000,3500,4000,4500,5000,6000,7000,8000,9000,10000,
             11000,12000,13000,14000,15000,16000,17000,18000,19000,20000)
 
-        // 전체 텍스트 결합 → 콤마/점/공백 (천단위 구분자) 제거 → 숫자 모두 추출
-        // detail 화면 강화 버튼 옆 "2,500" 이 OCR 결과에서 "2,500" / "2 500" / "2500" 어느 형태든 매칭
+        // OCR 노이즈 정규화 — Q/O→0, l/I→1, S→5, B→8 (Pokemon GO 강화 비용 텍스트 자주 잘못 인식)
         val whole = lines.joinToString(" ")
-        // 천단위 구분 (숫자, 정확히 3숫자 따라옴) 제거
+            .replace('Q', '0').replace('O', '0').replace('o', '0')
+            .replace('l', '1').replace('I', '1')
+            .replace('S', '5')
+            .replace('B', '8')
+        // 천단위 구분 제거 ("1,90Q" → "1,900" → "1900")
         val cleaned = whole.replace(Regex("""(?<=\d)[,.\s](?=\d{3}(?!\d))"""), "")
         val nums = Regex("""\d{2,7}""").findAll(cleaned).map { it.value.toInt() }.toList()
 
