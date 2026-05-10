@@ -51,6 +51,19 @@
             android:name=".overlay.OverlayService$StopReceiver"
             android:exported="false" />
 
+        <!-- 폰 단독 자동 스와이프 — 사용자가 설정 → 접근성 → PokeManager 활성화 필요 -->
+        <service
+            android:name=".swipe.AutoSwipeService"
+            android:exported="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/auto_swipe_service" />
+        </service>
+
     </application>
 
 </manifest>

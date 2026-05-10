@@ -49,11 +49,33 @@
             android:text="전체 화면 (실험적)" />
     </RadioGroup>
 
-    <!-- 자동 저장 toggle — 분석되면 사용자 클릭 없이 즉시 DB 저장 -->
+    <!-- ─── 자동 동작 toggle (모두 default OFF — 수동 분석이 default) -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="자동 동작 (옵션)"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
+
+    <CheckBox
+        android:id="@+id/cbAutoScan"
+        android:text="자동 스캔 (1초마다 화면 polling)"
+        android:checked="false"
+        android:layout_width="240dp"
+        android:layout_height="wrap_content" />
+
     <CheckBox
         android:id="@+id/cbAutoSave"
-        android:text="자동 저장 (자동 스와이프와 함께 사용)"
-        android:checked="true"
+        android:text="자동 저장 (분석 즉시 DB insert)"
+        android:checked="false"
+        android:layout_width="240dp"
+        android:layout_height="wrap_content" />
+
+    <CheckBox
+        android:id="@+id/cbClipboard"
+        android:text="클립보드 자동 복사 (이름+IV%)"
+        android:checked="false"
         android:layout_width="240dp"
         android:layout_height="wrap_content"
         android:layout_marginBottom="16dp" />
@@ -64,7 +86,7 @@
         android:textSize="11sp"
         android:textColor="#666"
         android:layout_marginBottom="16dp"
-        android:text="• 권한 다이얼로그에서 '포켓몬GO' 선택\n• 자동 저장 ON + PC ADB 스와이프 → 박스 전체 자동 분석" />
+        android:text="• default = 수동 모드. 몬스터볼 FAB 탭하면 그때만 1회 분석\n• 자동 스캔 ON 시에만 polling. 셋 다 ON = 자동 스와이프 모드" />
 
     <Button
         android:id="@+id/btnToggle"
@@ -77,6 +99,15 @@
         android:id="@+id/btnMyPokemon"
         android:text="내 포켓몬 리스트"
         style="@style/Widget.Material3.Button.OutlinedButton"
+        android:layout_width="240dp"
+        android:layout_height="56dp"
+        android:layout_marginBottom="12dp" />
+
+    <!-- 폰 단독 자동 스와이프 — AccessibilityService -->
+    <Button
+        android:id="@+id/btnAutoSwipe"
+        android:text="자동 스와이프 시작"
+        style="@style/Widget.Material3.Button.TonalButton"
         android:layout_width="240dp"
         android:layout_height="56dp" />
 

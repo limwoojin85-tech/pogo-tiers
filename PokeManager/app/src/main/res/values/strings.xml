@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">PokeManager</string>
+    <string name="auto_swipe_desc">PokeManager 가 박스 스캔 시 자동으로 좌→우 스와이프</string>
+    <string name="auto_swipe_summary">PokeManager 자동 스와이프</string>
 </resources>

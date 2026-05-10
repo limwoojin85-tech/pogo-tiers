@@ -41,11 +41,15 @@ class OverlayService : Service() {
         var isRunning = false
 
         // 사용자가 매뉴얼로 선택한 캡처 모드 — "single" (앱 하나) / "full" (전체)
-        // single 일 땐 splitMode 무시 (이미 단일 앱만 캡처됨)
         var captureMode: String = "single"
 
-        // 자동 저장 — 분석 결과 즉시 DB insert (자동 스와이프와 함께 사용)
-        var autoSave: Boolean = true
+        // ── 자동 동작 toggle — default 전부 OFF (사용자 100% 컨트롤)
+        // autoScan: true 면 1초마다 polling → 자동 분석. false 면 FAB 탭 시에만 분석.
+        var autoScan: Boolean = false
+        // autoSave: 분석 즉시 DB insert (사용자 클릭 없이)
+        var autoSave: Boolean = false
+        // clipboardCopy: 분석 시 닉네임 클립보드 자동 복사
+        var clipboardCopy: Boolean = false
     }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -106,7 +110,8 @@ class OverlayService : Service() {
             }, Handler(Looper.getMainLooper()))
             setupCapture()
             showFab()
-            startAutoScan()
+            // autoScan true 일 때만 polling 시작. default 는 수동 (FAB 탭 트리거).
+            if (autoScan) startAutoScan()
             isRunning = true
         }
 
@@ -425,15 +430,15 @@ class OverlayService : Service() {
             tvLeague.text = (tvLeague.text?.toString().orEmpty() +
                 "\n\n📋 결정: ${decision.bucket.label}\n${decision.reason}").trimStart()
 
-            // ─── 자동 클립보드 복사 (Calcy 의 auto-rename 대체)
-            // 형식: "{한글이름}{IV%}" 예: "라프라스95"
-            val perfPct = (top.perfection * 100).toInt()
-            val nickname = "${species.nameKo}${perfPct}"
-            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("PokeManager", nickname))
-            // 자동 저장 모드일 땐 toast 생략 (스와이프로 매번 뜨면 시끄러움)
-            if (!autoSave) {
-                Toast.makeText(this, "📋 \"${nickname}\" 복사됨", Toast.LENGTH_SHORT).show()
+            // 클립보드 복사 — toggle ON 일 때만 (default OFF — 사용자 짜증 방지)
+            if (clipboardCopy) {
+                val perfPct = (top.perfection * 100).toInt()
+                val nickname = "${species.nameKo}${perfPct}"
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("PokeManager", nickname))
+                if (!autoSave) {
+                    Toast.makeText(this, "📋 \"${nickname}\" 복사됨", Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
@@ -480,12 +485,13 @@ class OverlayService : Service() {
         windowManager?.addView(resultView, params)
         resultVisible = true
 
-        // 자동 저장 모드 → 1.5초 (auto-swipe 가 다음 마리 가도 분석 막지 않도록)
-        // 수동 모드 → 10초 (사용자가 결과 보고 저장 결정)
-        val autoCloseMs = if (autoSave) 1500L else 10000L
-        scope.launch {
-            delay(autoCloseMs)
-            removeResultView()
+        // 자동 모드 (autoScan=true + autoSave=true) 일 때만 1.5초 자동 닫기.
+        // 그 외 (수동 분석) 엔 사용자가 닫기 버튼 누를 때까지 대기.
+        if (autoScan && autoSave) {
+            scope.launch {
+                delay(1500L)
+                removeResultView()
+            }
         }
     }
 
