@@ -1,0 +1,46 @@
+{
+  "_about": {
+    "purpose": "DC / Reddit / 유튜버 등 커뮤니티 가이드 큐레이션. manual_picks 와 별개 — 가이드 자체 메타데이터 (출처/요약/날짜).",
+    "format": "guides[].id 별로 source/url/date/summary/recommends. recommends 는 sid 리스트 (sid → manual_picks 에서 활용)",
+    "usage": "사이트 UI 에 '커뮤니티 가이드' 섹션 — 가이드 모음 + 핵심 픽 노출. 사용자가 새 가이드 발견하면 직접 추가."
+  },
+
+  "guides": [
+    {
+      "id": "dc-newbie-2026-03",
+      "source": "디시 포고+ 갤러리",
+      "url": "https://gall.dcinside.com/mgallery/board/view/?id=pokemongoplus&no=33666",
+      "author": "이벨타르 부매니저",
+      "date": "2026-03-12",
+      "title": "뉴비들을 위한 A부터 Z까지 알려주는 포고 가이드",
+      "stats": "조회 6233, 추천 59, 댓글 42",
+      "summary": [
+        "스타팅 포켓몬 IV 10/10/10 고정 → 송출 OK",
+        "포케지니 앱으로 개체값 확인",
+        "타입별 최강 — 얼음/격투/땅/강철/바위/고스트가 메이저",
+        "마스터리그: 전설 백개체 (15/15/15) 또는 유사백 외엔 키울 필요 X",
+        "포켓지니 앱으로 원격 레이드 매칭"
+      ],
+      "applies_to": [
+        "스타팅 포켓몬 분류 (이상해씨/파이리/꼬부기 등) → 송출 OK 자동 분류",
+        "ML 분류 — 백개체 가중치 (이미 BucketClassifier 의 hundo 로직과 일치)"
+      ]
+    }
+  ],
+
+  "_examples_to_add": {
+    "_about": "사용자가 본 다른 가이드 추가할 때 형식",
+    "guides": [
+      {
+        "id": "broccoalri-yt-eqx",
+        "source": "broccoalri 유튜브",
+        "url": "https://youtube.com/watch?v=...",
+        "author": "broccoalri",
+        "date": "YYYY-MM-DD",
+        "title": "이쿼녹스컵 1티어 분석",
+        "summary": ["...", "..."],
+        "applies_to": ["페라페 → manual_picks/equinox_1500"]
+      }
+    ]
+  }
+}

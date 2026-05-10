@@ -1073,7 +1073,20 @@ def collect_all(species, moves, trans):
         "mega_possible_groups": mega_possible_groups,
         "pre_evolution_groups": pre_evolution_groups,
         "unranked": unranked,
+        "community_guides": _load_community_guides(),
     }
+
+
+def _load_community_guides():
+    """data/community_guides.json 로드 — 사이트 임베드용."""
+    try:
+        path = PVPOKE.parent / "community_guides.json"
+        if not path.exists():
+            return {"guides": []}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {"guides": data.get("guides") or []}
+    except Exception:
+        return {"guides": []}
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -1287,6 +1300,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="tab" data-tab="lc">리틀컵</div>
         <div class="tab" data-tab="cups">컵 시즌</div>
         <div class="tab" data-tab="transfer">박사 송출</div>
+        <div class="tab" data-tab="guides">📚 커뮤니티 가이드</div>
         <div class="tab" data-tab="calcy">📥 Calcy 분석</div>
         <div class="tab" data-tab="xlcandy">🍬 XL사탕·20km</div>
         <div class="tab" data-tab="search">검색</div>
@@ -3696,6 +3710,46 @@ function renderTransfer() {
   return html;
 }
 
+// ━━━━━━ 📚 커뮤니티 가이드 ━━━━━━
+function renderGuides() {
+  const guides = (DATA.community_guides && DATA.community_guides.guides) || [];
+  let html = `<div class="iv-note" style="background:#fff8e1;color:#664d03">
+    <b>📚 커뮤니티 가이드</b> — DC, 레딧, 유튜버 등 커뮤니티 큐레이션. 사이트 분석 외 시각.
+    <br>새 가이드 발견 시 <code>data/community_guides.json</code> 에 추가하면 자동 반영.
+  </div>`;
+
+  if (!guides.length) {
+    html += '<div class="empty">아직 등록된 가이드 없음</div>';
+    return html;
+  }
+
+  // 최신 날짜 순
+  guides.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  for (const g of guides) {
+    html += `<div class="card" style="margin-bottom:12px">
+      <h3 style="margin:0 0 4px"><a href="${g.url}" target="_blank" rel="noopener">${g.title || g.id}</a></h3>
+      <div class="muted" style="font-size:12px;margin-bottom:6px">
+        📅 ${g.date || '날짜 없음'} · ${g.source || '출처 미상'}${g.author ? ' · ' + g.author : ''}
+        ${g.stats ? ' · ' + g.stats : ''}
+      </div>`;
+
+    if (g.summary && g.summary.length) {
+      html += `<div style="margin-top:6px"><b>핵심:</b><ul style="margin:4px 0 6px 18px;padding:0">`;
+      for (const s of g.summary) html += `<li>${s}</li>`;
+      html += `</ul></div>`;
+    }
+
+    if (g.applies_to && g.applies_to.length) {
+      html += `<div style="margin-top:6px"><b>사이트 적용:</b><ul style="margin:4px 0 0 18px;padding:0">`;
+      for (const a of g.applies_to) html += `<li>${a}</li>`;
+      html += `</ul></div>`;
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
 // ━━━━━━ 🍬 XL 사탕 + 20km 파트너 ━━━━━━
 // 20km 파트너 거리: 전설/환상/UB 대부분
 const TWENTY_KM_SIDS = new Set([
@@ -4152,6 +4206,7 @@ function render() {
   else if (state.tab === 'lc') html = renderLeagueTab('LC', '리틀컵 (Little)', LC_KEYS, {cap:25});
   else if (state.tab === 'cups') html = renderCups();
   else if (state.tab === 'transfer') html = renderTransfer();
+  else if (state.tab === 'guides') html = renderGuides();
   else if (state.tab === 'calcy') html = renderCalcy();
   else if (state.tab === 'xlcandy') html = renderXLCandy();
   else if (state.tab === 'search') html = renderTriage();
