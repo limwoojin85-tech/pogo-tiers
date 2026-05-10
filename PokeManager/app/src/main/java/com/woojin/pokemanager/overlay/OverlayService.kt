@@ -257,13 +257,37 @@ class OverlayService : Service() {
     ) {
         val species = GameMasterRepo.findByNameFuzzy(data.pokemonName)
 
-        val ivResults = if (species != null) {
+        var ivResults = if (species != null) {
             IVCalculator.calculate(
                 species.atk, species.def, species.sta,
                 data.cp, data.hp, data.dustCost,
                 data.isShadow, data.isPurified
             )
         } else emptyList()
+
+        // 막대 그래프에서 직접 읽은 IV 가 있으면 — CP/HP 매칭 후보 중에서 막대 IV ±1 범위로 필터
+        // (막대 픽셀 분석은 ±1 오차 가능)
+        if (data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null) {
+            val filtered = ivResults.filter {
+                kotlin.math.abs(it.atkIV - data.ivBarsAtk) <= 1 &&
+                kotlin.math.abs(it.defIV - data.ivBarsDef) <= 1 &&
+                kotlin.math.abs(it.stamIV - data.ivBarsSta) <= 1
+            }
+            if (filtered.isNotEmpty()) ivResults = filtered
+        }
+        // 별 배지로 추가 검증 — 1성=IV합 0~22, 2성=23~36, 3성=37~45
+        if (data.starsLit != null) {
+            val (lo, hi) = when (data.starsLit) {
+                1 -> 0 to 22
+                2 -> 23 to 36
+                else -> 37 to 45
+            }
+            val byStars = ivResults.filter {
+                val sum = it.atkIV + it.defIV + it.stamIV
+                sum in lo..hi
+            }
+            if (byStars.isNotEmpty()) ivResults = byStars
+        }
 
         val pvpResults = if (ivResults.isNotEmpty()) {
             val top = ivResults.first()

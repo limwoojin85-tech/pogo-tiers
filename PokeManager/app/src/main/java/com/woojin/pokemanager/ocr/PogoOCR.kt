@@ -15,7 +15,13 @@ data class PogoScreenData(
     val hp: Int,
     val dustCost: Int,
     val isShadow: Boolean,
-    val isPurified: Boolean
+    val isPurified: Boolean,
+    // detail 화면 막대 그래프에서 직접 읽은 IV (정확도↑) — null 이면 못 읽음
+    val ivBarsAtk: Int? = null,
+    val ivBarsDef: Int? = null,
+    val ivBarsSta: Int? = null,
+    // 좌하단 별 배지의 칠해진 별 개수 (1-3) — IV 합 등급
+    val starsLit: Int? = null
 )
 
 object PogoOCR {
@@ -51,7 +57,19 @@ object PogoOCR {
             lastFailReason = "OCR 결과 비어있음 (화면 캡처 실패 또는 빈 화면)"
             return null
         }
-        return parsePogoScreen(combined, src.width, src.height, koreanText)
+        // text-based parsing → CP/HP/이름/별가루
+        val base = parsePogoScreen(combined, src.width, src.height, koreanText) ?: return null
+
+        // IV 막대 그래프 + 별 배지 픽셀 분석 — 진짜 IV 직접 추출
+        val bars = BarGraphAnalyzer.analyzeIvBars(src)
+        val badge = BarGraphAnalyzer.analyzeStarBadge(src)
+
+        return base.copy(
+            ivBarsAtk = bars?.atk,
+            ivBarsDef = bars?.def,
+            ivBarsSta = bars?.sta,
+            starsLit = badge?.starsLit
+        )
     }
 
     private suspend fun runOCR(bitmap: Bitmap, recognizer: com.google.mlkit.vision.text.TextRecognizer): String? =
