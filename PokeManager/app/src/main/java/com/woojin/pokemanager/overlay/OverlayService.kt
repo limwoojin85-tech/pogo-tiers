@@ -288,18 +288,11 @@ class OverlayService : Service() {
             )
         } else emptyList()
 
-        // 막대 그래프 IV 가 있으면 — 픽셀 분석 노이즈 감안 ±2 까지 허용
-        // ± 1 은 너무 엄격해서 후보 0 → filter 무효 케이스 자주 발생.
-        // 막대 픽셀이 트레이너 캐릭터 색에 false-positive 되면 atk/def 가 15 로 잘못 잡힘 →
-        // 그래도 일부 후보는 통과시켜 사용자 검토 가능하게.
-        if (data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null) {
-            val filtered = ivResults.filter {
-                kotlin.math.abs(it.atkIV - data.ivBarsAtk) <= 2 &&
-                kotlin.math.abs(it.defIV - data.ivBarsDef) <= 2 &&
-                kotlin.math.abs(it.stamIV - data.ivBarsSta) <= 2
-            }
-            if (filtered.isNotEmpty()) ivResults = filtered
-        }
+        // ★ 막대 분석 IV filter 비활성화 — 신뢰성 0 으로 판명.
+        // 이상해꽃 detail 에서 atk=15 def=15 (conf 1.00) 잡혔는데 진짜 IV (6,11,13) 와 완전 다름.
+        // 트레이너 캐릭터 옷 색 (파란색 + 채도 높음) 을 막대로 false-positive.
+        // 막대 결과는 카드의 hint 줄에만 표시 (사용자가 직접 비교 가능)
+        // — IV 후보 좁힘에는 사용 X.
         // 별 배지로 추가 검증 — 1성=IV합 0~22, 2성=23~36, 3성=37~45
         if (data.starsLit != null) {
             val (lo, hi) = when (data.starsLit) {
@@ -324,18 +317,14 @@ class OverlayService : Service() {
             lastDetailSpecies = species
         }
 
-        // canTrust = 정확 (막대 OR 조사하기) AND 후보 ≤ 5
-        // 그 외에도 막대만 잡혔으면 카드는 띄우되 hint 에 "정확도 낮음" 표시
-        val haveBars = data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null
-        val haveAppraisal = data.appraisal != null
-        val canTrust = (haveBars || haveAppraisal) && ivResults.size <= 5 && species != null
-        // showRough = 막대 잡혔지만 후보 많음 (사용자가 보고 검토)
-        val showRough = haveBars && species != null && ivResults.size in 6..50
-        if (!canTrust && !showRough) {
-            Log.i("PokeManager-Overlay", "SKIP card: bars=$haveBars appraisal=$haveAppraisal cands=${ivResults.size} species=${species?.id}")
+        // 카드 표시 조건 — species 매칭만 되면 항상 표시 (사용자 짜증 멈춤)
+        // 정확도는 카드 안에서 후보 수로 표시 — 1~3 확정 / 4~10 추정 / 11+ "후보 N개"
+        // 조사하기 들어가면 정확해짐
+        if (species == null) {
+            Log.i("PokeManager-Overlay", "SKIP card: species not matched")
             return
         }
-        Log.i("PokeManager-Overlay", "SHOW card: trust=$canTrust rough=$showRough cands=${ivResults.size}")
+        Log.i("PokeManager-Overlay", "SHOW card: cands=${ivResults.size} species=${species.id}")
 
         val pvpResults = if (ivResults.isNotEmpty()) {
             val top = ivResults.first()
@@ -471,28 +460,26 @@ class OverlayService : Service() {
         } else {
             val top = ivResults.first()
             val pct = (top.perfection * 100)
-            val haveBars = data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null
             val haveAppraisal = data.appraisal != null
-            val canTrust = (haveBars || haveAppraisal) && ivResults.size <= 5
+            // 정확도: 후보 1~3 = 확정 / 4~10 = 추정 / 11+ = 모름
+            val confident = ivResults.size <= 3 || haveAppraisal
 
-            if (canTrust) {
+            if (confident && ivResults.size <= 5) {
                 tvIV.text = "%.0f%%".format(pct)
                 tvIvBreakdown.text = "(${top.atkIV}-${top.defIV}-${top.stamIV})"
                 tvCpLv.text = "CP ${data.cp}, Lv %.1f".format(top.level)
-            } else if (haveBars) {
-                // 막대만 잡힘 — 막대 IV 보여주고 "정확도 낮음" 표시
-                val barPct = (data.ivBarsAtk!! + data.ivBarsDef!! + data.ivBarsSta!!) / 45f * 100
-                tvIV.text = "~%.0f%%".format(barPct)
-                tvIvBreakdown.text = "막대 ${data.ivBarsAtk}-${data.ivBarsDef}-${data.ivBarsSta}"
-                tvCpLv.text = "CP ${data.cp} • ⚠ 정확도 낮음"
+            } else if (ivResults.size <= 10) {
+                tvIV.text = "~%.0f%%".format(pct)
+                tvIvBreakdown.text = "(추정 ${top.atkIV}-${top.defIV}-${top.stamIV})"
+                tvCpLv.text = "CP ${data.cp} • 후보 ${ivResults.size}개"
             } else {
                 tvIV.text = "?"
-                tvIvBreakdown.text = "조사하기 필요"
-                tvCpLv.text = "CP ${data.cp}, HP ${data.hp}"
+                tvIvBreakdown.text = "후보 ${ivResults.size}개"
+                tvCpLv.text = "CP ${data.cp}, HP ${data.hp} • 조사하기 필요"
             }
 
-            // 리그 정보 — canTrust 일 때만 (막대/조사하기 + 후보 1~5)
-            if (canTrust) {
+            // 리그 정보 — confident 일 때만
+            if (confident && ivResults.size <= 5) {
                 renderLeagueLine(tvLeagueGL, "🏆", pvpResults.find { it.leagueCap == 1500 })
                 renderLeagueLine(tvLeagueUL, "🥇", pvpResults.find { it.leagueCap == 2500 })
                 renderLeagueLine(tvLeagueML, "🥈", pvpResults.find { it.leagueCap == Int.MAX_VALUE })
@@ -513,38 +500,42 @@ class OverlayService : Service() {
             val isTransfer = decision.bucket == BucketClassifier.Bucket.TRANSFER ||
                              decision.bucket == BucketClassifier.Bucket.TRANSFER_DUP
 
-            tvHint.text = if (canTrust) {
+            // 막대 결과는 hint 에 보여만 줌 (사용자가 진짜 막대와 비교 가능, IV 계산엔 안 씀)
+            val haveBars = data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null
+            tvHint.text = if (confident && ivResults.size <= 5) {
                 buildString {
                     append(decision.bucket.label)
-                    if (haveBars) append(" • 막대 ${data.ivBarsAtk}/${data.ivBarsDef}/${data.ivBarsSta}")
                     if (haveAppraisal) append(" • 조사 ${data.appraisal!!.tier?.name?.removePrefix("LV")?.take(1) ?: "?"}성")
                 }
+            } else if (haveBars) {
+                "⚠ 후보 ${ivResults.size}개 • 막대 추정 ${data.ivBarsAtk}/${data.ivBarsDef}/${data.ivBarsSta} (검증 필요)"
             } else {
-                "⚠ 조사하기 필요 (${ivResults.size}개 후보)"
+                "⚠ 후보 ${ivResults.size}개 — 조사하기 들어가면 정확"
             }
             tvHint.setTextColor(when {
-                !canTrust -> 0xFFFF6F00.toInt()             // 주황 — 모름
-                isTransfer -> 0xFFD32F2F.toInt()             // 빨강 — 송출
-                else -> 0xFF388E3C.toInt()                   // 초록 — 확정 보관/추천
+                ivResults.size > 10 || !confident -> 0xFFFF6F00.toInt()
+                isTransfer -> 0xFFD32F2F.toInt()
+                else -> 0xFF388E3C.toInt()
             })
 
-            // 방출 추천 일시정지 — canTrust (정확) 일 때만. 부정확한 결정으로 멈추면 사용자 짜증.
-            if (canTrust && isTransfer && AutoSwipeService.isSwiping && pauseOnTransfer) {
+            // 방출 추천 일시정지 — 확정 IV 일 때만 (부정확하면 멈추기 짜증)
+            val canTrustForTransfer = confident && ivResults.size <= 5
+            if (canTrustForTransfer && isTransfer && AutoSwipeService.isSwiping && pauseOnTransfer) {
                 AutoSwipeService.stopSwiping()
                 Toast.makeText(this,
                     "📦 방출 추천: ${species.nameKo} (${decision.bucket.label})\n수동 방출 후 옵션에서 다시 시작",
                     Toast.LENGTH_LONG).show()
             }
 
-            // 클립보드 (옵션) — canTrust (정확) 일 때만 — 부정확한 IV 로 닉네임 만들면 잘못
-            if (clipboardCopy && canTrust) {
+            // 클립보드 — 확정 IV 일 때만
+            if (clipboardCopy && confident && ivResults.size <= 5) {
                 val nickname = "${species.nameKo}${pct.toInt()}"
                 val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("PokeManager", nickname))
             }
 
-            // 자동 저장 — canTrust 일 때만 (정확한 IV 만 DB 에 저장)
-            if (autoSave && canTrust) {
+            // 자동 저장 — 확정 IV 일 때만
+            if (autoSave && confident && ivResults.size <= 5) {
                 scope.launch(Dispatchers.IO) {
                     AppDatabase.get(applicationContext).pokemonDao().insert(
                         MyPokemon(
