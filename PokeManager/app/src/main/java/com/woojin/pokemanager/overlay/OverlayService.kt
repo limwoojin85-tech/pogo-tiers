@@ -42,7 +42,10 @@ class OverlayService : Service() {
 
         // 사용자가 매뉴얼로 선택한 캡처 모드 — "single" (앱 하나) / "full" (전체)
         // single 일 땐 splitMode 무시 (이미 단일 앱만 캡처됨)
-        var captureMode: String = "full"
+        var captureMode: String = "single"
+
+        // 자동 저장 — 분석 결과 즉시 DB insert (자동 스와이프와 함께 사용)
+        var autoSave: Boolean = true
     }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -259,6 +262,23 @@ class OverlayService : Service() {
             PvPRanker.rankAll(species!!.atk, species.def, species.sta, top.atkIV, top.defIV, top.stamIV)
         } else emptyList()
 
+        // ── 자동 저장 — 사용자 클릭 없이 즉시 DB insert (auto-swipe 와 함께)
+        if (autoSave && ivResults.isNotEmpty() && species != null) {
+            val top = ivResults.first()
+            scope.launch(Dispatchers.IO) {
+                AppDatabase.get(applicationContext).pokemonDao().insert(
+                    MyPokemon(
+                        speciesId = species.id,
+                        cp = data.cp, hp = data.hp, dustCost = data.dustCost,
+                        atkIV = top.atkIV, defIV = top.defIV, stamIV = top.stamIV,
+                        level = top.level, perfection = top.perfection,
+                        isShadow = data.isShadow, isPurified = data.isPurified,
+                        profile = profile
+                    )
+                )
+            }
+        }
+
         showResult(data, ivResults, pvpResults, profile)
     }
 
@@ -411,8 +431,10 @@ class OverlayService : Service() {
             val nickname = "${species.nameKo}${perfPct}"
             val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("PokeManager", nickname))
-            // 짧은 토스트 — 첫 스캔 시만 (반복 토스트 방지)
-            Toast.makeText(this, "📋 \"${nickname}\" 복사됨", Toast.LENGTH_SHORT).show()
+            // 자동 저장 모드일 땐 toast 생략 (스와이프로 매번 뜨면 시끄러움)
+            if (!autoSave) {
+                Toast.makeText(this, "📋 \"${nickname}\" 복사됨", Toast.LENGTH_SHORT).show()
+            }
         }
 
         btnClose.setOnClickListener { removeResultView() }
@@ -458,9 +480,11 @@ class OverlayService : Service() {
         windowManager?.addView(resultView, params)
         resultVisible = true
 
-        // 10초 후 자동 닫기
+        // 자동 저장 모드 → 1.5초 (auto-swipe 가 다음 마리 가도 분석 막지 않도록)
+        // 수동 모드 → 10초 (사용자가 결과 보고 저장 결정)
+        val autoCloseMs = if (autoSave) 1500L else 10000L
         scope.launch {
-            delay(10000)
+            delay(autoCloseMs)
             removeResultView()
         }
     }

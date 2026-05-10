@@ -19,6 +19,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnToggle: Button
     private lateinit var tvStatus: TextView
     private lateinit var rgCaptureMode: RadioGroup
+    private lateinit var cbAutoSave: CheckBox
 
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -37,6 +38,11 @@ class MainActivity : AppCompatActivity() {
         btnToggle = findViewById(R.id.btnToggle)
         tvStatus = findViewById(R.id.tvStatus)
         rgCaptureMode = findViewById(R.id.rgCaptureMode)
+        cbAutoSave = findViewById(R.id.cbAutoSave)
+
+        // default — single (앱 하나만) + 자동 저장 ON
+        OverlayService.captureMode = "single"
+        OverlayService.autoSave = true
 
         GameMasterRepo.load(this)
 
@@ -44,6 +50,9 @@ class MainActivity : AppCompatActivity() {
         rgCaptureMode.setOnCheckedChangeListener { _, checkedId ->
             OverlayService.captureMode =
                 if (checkedId == R.id.rbModeSingle) "single" else "full"
+        }
+        cbAutoSave.setOnCheckedChangeListener { _, checked ->
+            OverlayService.autoSave = checked
         }
         findViewById<Button>(R.id.btnMyPokemon).setOnClickListener {
             startActivity(Intent(this, MyPokemonActivity::class.java))
@@ -65,9 +74,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // 시작 직전 captureMode 확정
+        // 시작 직전 captureMode + autoSave 확정
         OverlayService.captureMode =
             if (rgCaptureMode.checkedRadioButtonId == R.id.rbModeSingle) "single" else "full"
+        OverlayService.autoSave = cbAutoSave.isChecked
 
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "화면 위에 표시 권한을 허용해주세요", Toast.LENGTH_LONG).show()
