@@ -452,24 +452,24 @@ class OverlayService : Service() {
         } else {
             val top = ivResults.first()
             val pct = (top.perfection * 100)
-            // 정직한 표시 — 후보 수에 따라 신뢰도 다르게:
-            // 1~3개 = 확정 (정확 IV 표시), 4~15개 = 추정 (~XX%), 15+ = "?%" (조사하기 필요)
-            val confident = ivResults.size <= 3
-            val somewhatConfident = ivResults.size <= 15
-            tvIV.text = when {
-                confident -> "%.0f%%".format(pct)
-                somewhatConfident -> "~%.0f%%".format(pct)
-                else -> "?%"
-            }
-            tvIvBreakdown.text = when {
-                confident -> "(${top.atkIV}-${top.defIV}-${top.stamIV})"
-                somewhatConfident -> "(추정 ${top.atkIV}-${top.defIV}-${top.stamIV})"
-                else -> "(${ivResults.size}개 후보)"
-            }
-            tvCpLv.text = "CP ${data.cp}" + if (confident) ", Lv %.1f".format(top.level) else ""
+            // ★ 핵심 정직 규칙: 막대 분석 OR 조사하기 텍스트 둘 중 하나라도 있어야 IV 표시
+            val haveBars = data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null
+            val haveAppraisal = data.appraisal != null
+            val canTrust = (haveBars || haveAppraisal) && ivResults.size <= 5
 
-            // 리그 정보는 IV 확정 (후보 1~3개) 일 때만 — 그 외엔 부정확하니 숨김
-            if (ivResults.size <= 3) {
+            if (canTrust) {
+                tvIV.text = "%.0f%%".format(pct)
+                tvIvBreakdown.text = "(${top.atkIV}-${top.defIV}-${top.stamIV})"
+                tvCpLv.text = "CP ${data.cp}, Lv %.1f".format(top.level)
+            } else {
+                // 막대 / 조사하기 정보 없음 — IV 단정 X. CP/HP 만 표시.
+                tvIV.text = "?"
+                tvIvBreakdown.text = "조사하기 필요"
+                tvCpLv.text = "CP ${data.cp}, HP ${data.hp}"
+            }
+
+            // 리그 정보 — canTrust 일 때만 (막대/조사하기 + 후보 1~5)
+            if (canTrust) {
                 renderLeagueLine(tvLeagueGL, "🏆", pvpResults.find { it.leagueCap == 1500 })
                 renderLeagueLine(tvLeagueUL, "🥇", pvpResults.find { it.leagueCap == 2500 })
                 renderLeagueLine(tvLeagueML, "🥈", pvpResults.find { it.leagueCap == Int.MAX_VALUE })
@@ -490,42 +490,38 @@ class OverlayService : Service() {
             val isTransfer = decision.bucket == BucketClassifier.Bucket.TRANSFER ||
                              decision.bucket == BucketClassifier.Bucket.TRANSFER_DUP
 
-            tvHint.text = buildString {
-                if (ivResults.size <= 3) {
-                    // 확정 — 결정 라벨 표시
+            tvHint.text = if (canTrust) {
+                buildString {
                     append(decision.bucket.label)
-                    if (data.ivBarsAtk != null) {
-                        append(" • 막대 ${data.ivBarsAtk}/${data.ivBarsDef}/${data.ivBarsSta}")
-                    }
-                } else {
-                    // 부정확 — 조사하기 안내
-                    append("⚠ ${ivResults.size}개 후보 — 조사하기 들어가면 정확")
+                    if (haveBars) append(" • 막대 ${data.ivBarsAtk}/${data.ivBarsDef}/${data.ivBarsSta}")
+                    if (haveAppraisal) append(" • 조사 ${data.appraisal!!.tier?.name?.removePrefix("LV")?.take(1) ?: "?"}성")
                 }
+            } else {
+                "⚠ 조사하기 필요 (${ivResults.size}개 후보)"
             }
             tvHint.setTextColor(when {
-                ivResults.size > 15 -> 0xFFFF6F00.toInt()  // 주황 — 모름
-                ivResults.size > 3 -> 0xFFFF9800.toInt()    // 주황 옅음 — 추정
-                isTransfer -> 0xFFD32F2F.toInt()
-                else -> 0xFF388E3C.toInt()
+                !canTrust -> 0xFFFF6F00.toInt()             // 주황 — 모름
+                isTransfer -> 0xFFD32F2F.toInt()             // 빨강 — 송출
+                else -> 0xFF388E3C.toInt()                   // 초록 — 확정 보관/추천
             })
 
-            // 방출 추천 + 자동 스와이프 중 + pauseOnTransfer ON → 일시정지 + 알림
-            if (isTransfer && AutoSwipeService.isSwiping && pauseOnTransfer) {
+            // 방출 추천 일시정지 — canTrust (정확) 일 때만. 부정확한 결정으로 멈추면 사용자 짜증.
+            if (canTrust && isTransfer && AutoSwipeService.isSwiping && pauseOnTransfer) {
                 AutoSwipeService.stopSwiping()
                 Toast.makeText(this,
                     "📦 방출 추천: ${species.nameKo} (${decision.bucket.label})\n수동 방출 후 옵션에서 다시 시작",
                     Toast.LENGTH_LONG).show()
             }
 
-            // 클립보드 (옵션)
-            if (clipboardCopy) {
+            // 클립보드 (옵션) — canTrust (정확) 일 때만 — 부정확한 IV 로 닉네임 만들면 잘못
+            if (clipboardCopy && canTrust) {
                 val nickname = "${species.nameKo}${pct.toInt()}"
                 val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("PokeManager", nickname))
             }
 
-            // 자동 저장 (옵션)
-            if (autoSave) {
+            // 자동 저장 — canTrust 일 때만 (정확한 IV 만 DB 에 저장)
+            if (autoSave && canTrust) {
                 scope.launch(Dispatchers.IO) {
                     AppDatabase.get(applicationContext).pokemonDao().insert(
                         MyPokemon(
