@@ -2,6 +2,7 @@ package com.woojin.pokemanager.overlay
 
 import android.app.*
 import android.content.*
+import android.content.pm.ServiceInfo
 import android.graphics.*
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -63,7 +64,20 @@ class OverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIF_ID, buildNotification())
+        // Android 14 (SDK 34)+ 는 startForeground 에 type 명시 필수 (mediaProjection)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIF_ID, buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIF_ID, buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+        } else {
+            startForeground(NOTIF_ID, buildNotification())
+        }
 
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED) ?: return START_NOT_STICKY
         val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
@@ -73,6 +87,13 @@ class OverlayService : Service() {
         if (resultCode == Activity.RESULT_OK && resultData != null) {
             val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mgr.getMediaProjection(resultCode, resultData)
+            // Android 14+ 필수 — registerCallback 안 하면 즉시 stop 됨
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    isRunning = false
+                    stopSelf()
+                }
+            }, Handler(Looper.getMainLooper()))
             setupCapture()
             showFab()
             startAutoScan()
