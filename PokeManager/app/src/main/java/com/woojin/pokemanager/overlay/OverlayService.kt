@@ -23,6 +23,8 @@ import com.woojin.pokemanager.data.AppDatabase
 import com.woojin.pokemanager.data.GameMasterRepo
 import com.woojin.pokemanager.data.MyPokemon
 import com.woojin.pokemanager.ocr.PogoOCR
+import com.woojin.pokemanager.swipe.AutoSwipeService
+import android.content.Intent
 import kotlinx.coroutines.*
 
 class OverlayService : Service() {
@@ -44,12 +46,11 @@ class OverlayService : Service() {
         var captureMode: String = "single"
 
         // ── 자동 동작 toggle — default 전부 OFF (사용자 100% 컨트롤)
-        // autoScan: true 면 1초마다 polling → 자동 분석. false 면 FAB 탭 시에만 분석.
         var autoScan: Boolean = false
-        // autoSave: 분석 즉시 DB insert (사용자 클릭 없이)
         var autoSave: Boolean = false
-        // clipboardCopy: 분석 시 닉네임 클립보드 자동 복사
         var clipboardCopy: Boolean = false
+        // 방출 추천 마리 (transfer/transfer_dup) 만나면 자동 스와이프 일시정지 → 사용자가 수동 방출 → 다시 시작
+        var pauseOnTransfer: Boolean = true
     }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -407,10 +408,32 @@ class OverlayService : Service() {
             renderLeagueLine(tvLeagueUL, "🥇", pvpResults.find { it.leagueCap == 2500 })
             renderLeagueLine(tvLeagueML, "🥈", pvpResults.find { it.leagueCap == Int.MAX_VALUE })
 
-            // 후보 N개 알림 (별가루 모를 때)
-            tvHint.text = if (data.dustCost <= 0 && ivResults.size > 3)
-                "후보 ${ivResults.size}개 — 강화 화면 가서 다시 탭"
-            else ""
+            // 결정 (보관/송출/레이드 등) — bucket classification
+            val meta = GameMasterRepo.meta(species.id)
+            val groupClass = GameMasterRepo.classifyGroup(species.id)
+            val decision = BucketClassifier.classify(
+                sid = species.id,
+                ivAtk = top.atkIV, ivDef = top.defIV, ivStam = top.stamIV,
+                cp = data.cp, species = meta, groupClass = groupClass
+            )
+            val isTransfer = decision.bucket == BucketClassifier.Bucket.TRANSFER ||
+                             decision.bucket == BucketClassifier.Bucket.TRANSFER_DUP
+
+            tvHint.text = buildString {
+                append(decision.bucket.label)
+                if (data.dustCost <= 0 && ivResults.size > 3) {
+                    append(" • 후보 ${ivResults.size}개 (강화 가서 다시 탭)")
+                }
+            }
+            tvHint.setTextColor(if (isTransfer) 0xFFD32F2F.toInt() else 0xFF388E3C.toInt())
+
+            // 방출 추천 + 자동 스와이프 중 + pauseOnTransfer ON → 일시정지 + 알림
+            if (isTransfer && AutoSwipeService.isSwiping && pauseOnTransfer) {
+                AutoSwipeService.stopSwiping()
+                Toast.makeText(this,
+                    "📦 방출 추천: ${species.nameKo} (${decision.bucket.label})\n수동 방출 후 옵션에서 다시 시작",
+                    Toast.LENGTH_LONG).show()
+            }
 
             // 클립보드 (옵션)
             if (clipboardCopy) {
@@ -457,7 +480,9 @@ class OverlayService : Service() {
         resultVisible = true
 
         // 자동 모드 (autoScan + autoSave) 시에만 빠른 자동 닫기. 수동 모드는 사용자 탭 시 닫힘.
-        if (autoScan && autoSave) {
+        // 단 방출 추천은 자동 닫기 안 함 (사용자가 보고 수동 방출 결정해야 함)
+        val isTransferShown = tvHint.currentTextColor == 0xFFD32F2F.toInt()
+        if (autoScan && autoSave && !isTransferShown) {
             scope.launch { delay(2000L); removeResultView() }
         }
     }
@@ -523,11 +548,15 @@ class OverlayService : Service() {
         val cbScan = optionsView!!.findViewById<CheckBox>(R.id.optAutoScan)
         val cbSave = optionsView!!.findViewById<CheckBox>(R.id.optAutoSave)
         val cbClip = optionsView!!.findViewById<CheckBox>(R.id.optClipboard)
+        val cbPause = optionsView!!.findViewById<CheckBox>(R.id.optPauseOnTransfer)
+        val btnSwipe = optionsView!!.findViewById<Button>(R.id.btnOptAutoSwipe)
+        val btnDebug = optionsView!!.findViewById<Button>(R.id.btnOptDebug)
         val btnClose = optionsView!!.findViewById<Button>(R.id.btnOptionsClose)
 
         cbScan.isChecked = autoScan
         cbSave.isChecked = autoSave
         cbClip.isChecked = clipboardCopy
+        cbPause.isChecked = pauseOnTransfer
 
         cbScan.setOnCheckedChangeListener { _, c ->
             val wasOff = !autoScan
@@ -537,6 +566,11 @@ class OverlayService : Service() {
         }
         cbSave.setOnCheckedChangeListener { _, c -> autoSave = c }
         cbClip.setOnCheckedChangeListener { _, c -> clipboardCopy = c }
+        cbPause.setOnCheckedChangeListener { _, c -> pauseOnTransfer = c }
+
+        btnSwipe.text = if (AutoSwipeService.isSwiping) "■ 자동 스와이프 정지" else "🤖 자동 스와이프 시작"
+        btnSwipe.setOnClickListener { handleAutoSwipeButton(btnSwipe) }
+        btnDebug.setOnClickListener { showDebugOcrInfo() }
         btnClose.setOnClickListener { hideOptionsPanel() }
 
         val params = WindowManager.LayoutParams(
@@ -559,6 +593,47 @@ class OverlayService : Service() {
             try { windowManager?.removeView(it) } catch (_: Exception) {}
             optionsView = null
         }
+    }
+
+    // 옵션 패널의 "자동 스와이프 시작/정지" 버튼
+    private fun handleAutoSwipeButton(btn: Button) {
+        if (AutoSwipeService.isSwiping) {
+            AutoSwipeService.stopSwiping()
+            Toast.makeText(this, "자동 스와이프 정지", Toast.LENGTH_SHORT).show()
+            btn.text = "🤖 자동 스와이프 시작"
+            return
+        }
+        if (AutoSwipeService.instance == null) {
+            Toast.makeText(this,
+                "설정 → 접근성 → PokeManager 자동 스와이프 → ON",
+                Toast.LENGTH_LONG).show()
+            val i = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+            return
+        }
+        Toast.makeText(this, "5초 후 시작 — 포고 박스 detail 띄우세요", Toast.LENGTH_LONG).show()
+        hideOptionsPanel()
+        Handler(Looper.getMainLooper()).postDelayed({
+            AutoSwipeService.startSwiping()
+        }, 5000L)
+    }
+
+    // 옵션 패널의 "마지막 OCR 결과 보기" 버튼 — 디버그
+    private fun showDebugOcrInfo() {
+        val msg = buildString {
+            append("실패 사유: ${PogoOCR.lastFailReason.ifEmpty { "(성공)" }}\n\n")
+            append("=== 라틴 OCR ===\n")
+            append(PogoOCR.lastOcrLatin.ifEmpty { "(비어있음)" })
+            append("\n\n=== 한글 OCR ===\n")
+            append(PogoOCR.lastOcrKorean.ifEmpty { "(비어있음)" })
+        }
+        // 클립보드에 복사 — 사용자가 디스코드 등에 붙여넣어 정보 제공 가능
+        val cb = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        cb.setPrimaryClip(ClipData.newPlainText("PokeManager OCR debug", msg))
+        Toast.makeText(this,
+            "OCR 결과 클립보드 복사됨\n실패 사유: ${PogoOCR.lastFailReason.ifEmpty { "(성공)" }}",
+            Toast.LENGTH_LONG).show()
     }
 
     private fun removeResultView() {

@@ -25,6 +25,11 @@ object PogoOCR {
     // 한글 OCR — 포켓몬 이름 인식 (한국어 모델)
     private val koreanRecognizer = TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
 
+    // 마지막 OCR 결과 — 분석 실패 시 디버그용 (사용자가 정보 제공할 수 있게)
+    @Volatile var lastOcrLatin: String = ""
+    @Volatile var lastOcrKorean: String = ""
+    @Volatile var lastFailReason: String = ""
+
     // Pokémon GO 개체 화면에서 데이터를 OCR로 추출
     // cropRect: 분할화면에서 분석할 영역 (null이면 전체)
     suspend fun analyze(bitmap: Bitmap, cropRect: Rect? = null): PogoScreenData? {
@@ -35,8 +40,14 @@ object PogoOCR {
         // 두 OCR 동시 실행 — 라틴 (CP/HP/숫자) + 한글 (이름)
         val latinText = runOCR(src, latinRecognizer) ?: ""
         val koreanText = runOCR(src, koreanRecognizer) ?: ""
+        lastOcrLatin = latinText
+        lastOcrKorean = koreanText
+
         val combined = "$latinText\n$koreanText"
-        if (combined.isBlank()) return null
+        if (combined.isBlank()) {
+            lastFailReason = "OCR 결과 비어있음 (화면 캡처 실패 또는 빈 화면)"
+            return null
+        }
         return parsePogoScreen(combined, src.width, src.height, koreanText)
     }
 
@@ -52,8 +63,14 @@ object PogoOCR {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val koLines = koreanText.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
-        val cp = extractCP(lines) ?: return null
-        val hp = extractHP(lines) ?: return null
+        val cp = extractCP(lines) ?: run {
+            lastFailReason = "CP 인식 실패"
+            return null
+        }
+        val hp = extractHP(lines) ?: run {
+            lastFailReason = "HP 인식 실패 (X/Y 패턴 없음)"
+            return null
+        }
         // dust 는 강화 화면 전용 — detail 화면엔 없음. optional 로 둠 (없으면 0)
         val dust = extractDust(lines) ?: 0
         // 한글 OCR 결과에서 이름 추출 — Pokemon detail 화면 검증 ★강화
@@ -62,12 +79,19 @@ object PogoOCR {
         //  1) 한글 이름 추출 됨 (박스 list 는 작은 폰트 + 잘린 이름이라 한글 OCR 거의 실패)
         //  2) HP "X / Y" 패턴 등장 (박스 list 는 HP 표시 X)
         //  3) Pokemon detail 의 "kg" 단위 (체중) 등장 — detail 만 표시. "m" 만 으로는 너무 약함 (오인 위험)
-        if (name.isNullOrBlank() || name.length < 2) return null
+        if (name.isNullOrBlank() || name.length < 2) {
+            lastFailReason = "한글 이름 인식 실패"
+            return null
+        }
         val hasWeight = lines.any { line ->
             line.contains("kg", ignoreCase = true) ||
             line.matches(Regex(""".*\d+\.\d+\s*kg.*""", RegexOption.IGNORE_CASE))
         }
-        if (!hasWeight) return null
+        if (!hasWeight) {
+            lastFailReason = "체중 (kg) 인식 실패 — detail 화면 아닌 것으로 판단 (박스 list)"
+            return null
+        }
+        lastFailReason = ""
 
         val isShadow = lines.any { it.contains("shadow", ignoreCase = true) || it.contains("그림자") }
             || koLines.any { it.contains("그림자") }
@@ -145,11 +169,32 @@ object PogoOCR {
         val dustValues = setOf(200,400,600,800,1000,1300,1600,1900,2200,2500,
             3000,3500,4000,4500,5000,6000,7000,8000,9000,10000,
             11000,12000,13000,14000,15000,16000,17000,18000,19000,20000)
-        for (line in lines) {
-            // 별가루 수치 옆에 있는 숫자
-            val nums = Regex("""\d{3,6}""").findAll(line).map { it.value.toInt() }
+
+        // 1단계: 각 라인 + 라인 결합 (강화 버튼 옆 작은 박스의 "2,500" 처리)
+        // OCR 가 "2,500" 을 "2,500" 또는 "2 500" 또는 "2.500" 으로 잡을 수 있음
+        for (rawLine in lines) {
+            // 콤마/점/공백 제거 후 숫자 검사
+            val cleaned = rawLine.replace(Regex("""[,.\s](?=\d{3})"""), "")
+            val nums = Regex("""\d{3,6}""").findAll(cleaned).map { it.value.toInt() }.toList()
             for (n in nums) {
                 if (n in dustValues) return n
+            }
+            // 또한 별의모래 (총 보유량 — 1,687,937 같은 큰 수) 다음/이전 라인의 작은 수도 검사
+        }
+
+        // 2단계: 강화 버튼 영역 — "강화" 단어 + 같은/다음 라인의 별가루 비용
+        // detail 화면 강화 버튼은 작아서 OCR 이 별도 라인으로 잡을 가능성. 인접 라인 페어 검사.
+        for (i in lines.indices) {
+            val line = lines[i]
+            if (line.contains("강화") || line.contains("power", true)) {
+                // 같은 + 인접 (전후 2줄) 검사
+                val window = (maxOf(0, i-1)..minOf(lines.lastIndex, i+2)).joinToString(" ") { lines[it] }
+                val cleaned = window.replace(Regex("""[,.\s](?=\d{3})"""), "")
+                val nums = Regex("""\d{3,6}""").findAll(cleaned).map { it.value.toInt() }.toList()
+                for (n in nums) {
+                    // 별의모래 총량 (보통 100k+) 은 dust 가 아님
+                    if (n in dustValues && n < 100000) return n
+                }
             }
         }
         return null
