@@ -99,13 +99,18 @@ object BarGraphAnalyzer {
         }
 
         val yellowRatio = yellowPx.toFloat() / totalSampled
-        // 별 1개 ≈ 0.04~0.09, 2개 ≈ 0.10~0.16, 3개 ≈ 0.17+
+        // 노랑 픽셀 매우 적으면 → 조사 안 한 마리 (모든 별 회색) → null (filter 안 적용)
+        if (yellowRatio < 0.025f) {
+            lastDebugInfo += " | star: 0 (조사 안 한 마리, yellow=${"%.3f".format(yellowRatio)})"
+            return null
+        }
+        // 별 1개 ≈ 0.03~0.08, 2개 ≈ 0.09~0.15, 3개 ≈ 0.16+
         val stars = when {
-            yellowRatio < 0.07f -> 1
-            yellowRatio < 0.14f -> 2
+            yellowRatio < 0.085f -> 1
+            yellowRatio < 0.155f -> 2
             else -> 3
         }
-        lastDebugInfo += " | star: $stars (orange=${"%.2f".format(orangeRatio)} yellow=${"%.2f".format(yellowRatio)})"
+        lastDebugInfo += " | star: $stars (orange=${"%.2f".format(orangeRatio)} yellow=${"%.3f".format(yellowRatio)})"
         return StarBadge(starsLit = stars, totalStars = 3)
     }
 
@@ -148,13 +153,14 @@ object BarGraphAnalyzer {
         return iv to conf
     }
 
-    /** Pokemon GO 의 IV 막대 색 — 진한 주황/노랑.
-     *  여러 색조 (가벼운 베이지 ~ 진한 주황) 다 잡히게 관대하게 매칭. */
+    /** Pokemon GO 막대 채워진 픽셀 — 색 무관 (HP 분홍, 방어 노랑, 공격 주황, 종 타입 색 등 다양).
+     *  채도 기반으로만 판정 — 빈 막대는 매우 옅은 회색 (saturation ≈ 0). */
     private fun isFillColor(c: Int): Boolean {
         val r = Color.red(c); val g = Color.green(c); val b = Color.blue(c)
-        // 주황 계열: R 가장 강하고 B 가장 약함, R-B 차이 큼
         val sat = saturation(r, g, b)
-        return sat > 0.25f && r >= 180 && r > b + 50 && g in 80..230 && b < 160
+        val brightness = (r + g + b) / 3
+        // 채도 0.20+ 이고 너무 밝거나 너무 어둡지 않음 (옅은 회색/검정 배경 X)
+        return sat > 0.20f && brightness in 90..240
     }
 
     private fun saturation(r: Int, g: Int, b: Int): Float {

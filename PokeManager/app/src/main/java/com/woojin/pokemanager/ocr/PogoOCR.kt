@@ -184,25 +184,33 @@ object PogoOCR {
     }
 
     private fun extractHP(lines: List<String>): Int? {
-        // 1순위: "HP" 단어가 같은 라인에 있는 X/Y 패턴 (예: "78 / 78 HP")
+        // 1순위: "HP" 단어가 같은 라인 X/Y (예: "78 / 78 HP")
         for (line in lines) {
             if (!line.contains("HP", ignoreCase = true)) continue
             val m = Regex("""(\d{1,4})\s*/\s*(\d{1,4})""").find(line)
             if (m != null) {
                 val cur = m.groupValues[1].toIntOrNull() ?: continue
                 val max = m.groupValues[2].toIntOrNull() ?: continue
-                // 풀 hp 일 때 cur == max. 둘 다 같고 1~9999 범위
                 if (max in 1..9999 && cur <= max) return max
             }
         }
-        // 2순위: "X / Y" 단독 패턴 — 단 두 숫자 동일 (포고 detail 의 풀체력)
+        // 2순위: "X / Y" 단독 라인 + 인접 라인에 HP — OCR 가 "65 / 65" 와 "HP" 분리한 경우
+        for (i in lines.indices) {
+            val m = Regex("""^\s*(\d{1,4})\s*/\s*(\d{1,4})\s*$""").find(lines[i]) ?: continue
+            val cur = m.groupValues[1].toIntOrNull() ?: continue
+            val max = m.groupValues[2].toIntOrNull() ?: continue
+            if (max !in 1..9999 || cur > max) continue
+            // ±1 라인에 HP 단어 있나
+            val nearby = (maxOf(0, i-1)..minOf(lines.lastIndex, i+1))
+                .any { lines[it].contains("HP", ignoreCase = true) }
+            if (nearby && cur == max) return max
+        }
+        // 3순위: "X / Y" 단독에서 cur == max (포고 detail 의 풀체력 확실)
         for (line in lines) {
-            val m = Regex("""^\s*(\d{1,4})\s*/\s*(\d{1,4})\s*HP?\s*$""", RegexOption.IGNORE_CASE).find(line)
-            if (m != null) {
-                val cur = m.groupValues[1].toIntOrNull() ?: continue
-                val max = m.groupValues[2].toIntOrNull() ?: continue
-                if (max in 1..9999 && cur == max) return max
-            }
+            val m = Regex("""^\s*(\d{1,4})\s*/\s*(\d{1,4})\s*$""").find(line) ?: continue
+            val cur = m.groupValues[1].toIntOrNull() ?: continue
+            val max = m.groupValues[2].toIntOrNull() ?: continue
+            if (max in 10..9999 && cur == max) return max
         }
         return null
     }

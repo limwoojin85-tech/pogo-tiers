@@ -560,16 +560,24 @@ class OverlayService : Service() {
     }
 
     private fun isOverCloseTarget(rawX: Float, rawY: Float): Boolean {
-        val v = fabCloseView ?: return false
-        val loc = IntArray(2); v.getLocationOnScreen(loc)
-        val cx = loc[0] + v.width / 2f
-        val cy = loc[1] + v.height / 2f
+        if (fabCloseView == null) return false
+        val density = resources.displayMetrics.density
+        // X 영역은 BOTTOM CENTER, y=80px from bottom, size=64dp
+        val sizePx = 64 * density
+        val cx = resources.displayMetrics.widthPixels / 2f
+        val cy = resources.displayMetrics.heightPixels - (80 + sizePx / 2f)
         val dx = rawX - cx; val dy = rawY - cy
-        return Math.sqrt((dx * dx + dy * dy).toDouble()) < v.width / 2.0 + 30
+        // Hit-radius = X 반경 + 80px buffer (사용자 친화적)
+        val hitRadius = sizePx / 2f + 80f
+        return Math.sqrt((dx * dx + dy * dy).toDouble()) < hitRadius
     }
 
     private fun highlightCloseIfHover(rawX: Float, rawY: Float) {
-        fabCloseView?.alpha = if (isOverCloseTarget(rawX, rawY)) 1.0f else 0.7f
+        fabCloseView?.let {
+            it.alpha = if (isOverCloseTarget(rawX, rawY)) 1.0f else 0.7f
+            it.scaleX = if (isOverCloseTarget(rawX, rawY)) 1.3f else 1.0f
+            it.scaleY = if (isOverCloseTarget(rawX, rawY)) 1.3f else 1.0f
+        }
     }
 
     // ──────────────────────── FAB long-press → 옵션 패널
@@ -713,11 +721,15 @@ class OverlayService : Service() {
             startActivity(i)
             return
         }
-        Toast.makeText(this, "5초 후 시작 — 포고 박스 detail 띄우세요", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "5초 후 시작 — 포고 박스 detail 띄우세요\n(자동 스캔 + 자동 저장 자동 ON)",
+            Toast.LENGTH_LONG).show()
         hideOptionsPanel()
         Handler(Looper.getMainLooper()).postDelayed({
+            // 자동 스와이프와 함께 자동 스캔/저장 자동 ON — swipe 마다 매 마리 분석/저장
+            autoScan = true
+            autoSave = true
+            if (autoScanJob == null || autoScanJob?.isActive != true) startAutoScan()
             AutoSwipeService.startSwiping()
-            // 시작과 동시에 floating 정지 mini-FAB 표시
             showStopFab()
         }, 5000L)
     }
