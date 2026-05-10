@@ -54,18 +54,20 @@ object PogoOCR {
 
         val cp = extractCP(lines) ?: return null
         val hp = extractHP(lines) ?: return null
-        val dust = extractDust(lines) ?: return null
+        // dust 는 강화 화면 전용 — detail 화면엔 없음. optional 로 둠 (없으면 0)
+        val dust = extractDust(lines) ?: 0
         // 한글 OCR 결과에서 이름 추출 — Pokemon detail 화면 검증 ★강화
         val name = extractKoreanName(koLines) ?: extractName(lines, cp)
         // 박스 list 화면 false positive 방지 — 다음 조건 다 만족해야 detail 인정:
         //  1) 한글 이름 추출 됨 (박스 list 는 작은 폰트 + 잘린 이름이라 한글 OCR 거의 실패)
-        //  2) HP "X / Y" 패턴 한 번만 등장 (박스 list 는 HP 표시 X)
-        //  3) Pokemon detail 의 "kg" / "m" 단위 (체중/키) 등장 — detail 만 표시
+        //  2) HP "X / Y" 패턴 등장 (박스 list 는 HP 표시 X)
+        //  3) Pokemon detail 의 "kg" 단위 (체중) 등장 — detail 만 표시. "m" 만 으로는 너무 약함 (오인 위험)
         if (name.isNullOrBlank() || name.length < 2) return null
-        val hasWeightOrHeight = lines.any { line ->
-            line.contains("kg") || line.contains("m") && line.matches(Regex(""".*\d+\.\d+.*m.*"""))
+        val hasWeight = lines.any { line ->
+            line.contains("kg", ignoreCase = true) ||
+            line.matches(Regex(""".*\d+\.\d+\s*kg.*""", RegexOption.IGNORE_CASE))
         }
-        if (!hasWeightOrHeight) return null
+        if (!hasWeight) return null
 
         val isShadow = lines.any { it.contains("shadow", ignoreCase = true) || it.contains("그림자") }
             || koLines.any { it.contains("그림자") }
