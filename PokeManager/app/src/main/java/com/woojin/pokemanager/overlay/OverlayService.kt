@@ -479,11 +479,14 @@ class OverlayService : Service() {
         windowManager?.addView(resultView, params)
         resultVisible = true
 
-        // 자동 모드 (autoScan + autoSave) 시에만 빠른 자동 닫기. 수동 모드는 사용자 탭 시 닫힘.
-        // 단 방출 추천은 자동 닫기 안 함 (사용자가 보고 수동 방출 결정해야 함)
+        // 카드 자동 닫힘 (모든 모드)
+        // - 자동 + 자동저장 모드: 1.5초 (다음 마리 분석 빨리 가야)
+        // - 수동 모드: 6초 (사용자가 보고 다음 마리 가도록. 옛 카드 안 남게)
+        // - 방출 추천 (transfer 빨강): 자동 닫기 X (사용자가 수동 방출 결정해야)
         val isTransferShown = tvHint.currentTextColor == 0xFFD32F2F.toInt()
-        if (autoScan && autoSave && !isTransferShown) {
-            scope.launch { delay(2000L); removeResultView() }
+        if (!isTransferShown) {
+            val ms = if (autoScan && autoSave) 1500L else 6000L
+            scope.launch { delay(ms); removeResultView() }
         }
     }
 
