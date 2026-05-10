@@ -8,6 +8,7 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault"
     android:canPerformGestures="true"
+    android:canRequestFilterKeyEvents="true"
     android:notificationTimeout="100"
     android:description="@string/auto_swipe_desc"
     android:summary="@string/auto_swipe_summary" />
