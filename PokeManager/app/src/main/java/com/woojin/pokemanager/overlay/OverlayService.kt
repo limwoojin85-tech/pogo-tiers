@@ -64,6 +64,7 @@ class OverlayService : Service() {
     private var resultView: View? = null
     private var fabCloseView: View? = null   // FAB 드래그 시 하단 X 영역
     private var optionsView: View? = null    // FAB long-press 옵션 패널
+    private var stopFabView: View? = null    // 자동 스와이프 중 floating 정지 버튼
 
     // 자동 스캔 상태
     private var autoScanJob: Job? = null
@@ -445,8 +446,15 @@ class OverlayService : Service() {
 
             tvHint.text = buildString {
                 append(decision.bucket.label)
-                if (data.dustCost <= 0 && ivResults.size > 3) {
-                    append(" • 후보 ${ivResults.size}개 (강화 가서 다시 탭)")
+                // 막대 분석 결과 (사용자가 막대 잘 잡혔는지 확인)
+                if (data.ivBarsAtk != null) {
+                    append(" • 막대 ${data.ivBarsAtk}/${data.ivBarsDef}/${data.ivBarsSta}")
+                    if (data.starsLit != null) append(" ★$data.starsLit")
+                } else {
+                    append(" • 막대 분석 실패")
+                }
+                if (ivResults.size > 5) {
+                    append(" (${ivResults.size}개 후보)")
                 }
             }
             tvHint.setTextColor(if (isTransfer) 0xFFD32F2F.toInt() else 0xFF388E3C.toInt())
@@ -622,6 +630,72 @@ class OverlayService : Service() {
         }
     }
 
+    // ──────────────────────── 자동 스와이프 중 floating 정지 mini-FAB
+    fun showStopFab() {
+        if (stopFabView != null) return
+        val inflater = LayoutInflater.from(this)
+        stopFabView = inflater.inflate(R.layout.overlay_stop_fab, null)
+        stopFabView!!.setOnClickListener {
+            AutoSwipeService.stopSwiping()
+            hideStopFab()
+            Toast.makeText(this, "🛑 자동 스와이프 정지", Toast.LENGTH_SHORT).show()
+        }
+        // 드래그도 가능하게 (사용자 위치 변경)
+        stopFabView!!.setOnTouchListener(object : View.OnTouchListener {
+            private var iX = 0; private var iY = 0
+            private var tX = 0f; private var tY = 0f
+            private var dragged = false
+            override fun onTouch(v: View, e: MotionEvent): Boolean {
+                val params = v.layoutParams as WindowManager.LayoutParams
+                when (e.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        iX = params.x; iY = params.y
+                        tX = e.rawX; tY = e.rawY
+                        dragged = false
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = e.rawX - tX; val dy = e.rawY - tY
+                        if (Math.abs(dx) > 15 || Math.abs(dy) > 15) {
+                            dragged = true
+                            params.x = iX + dx.toInt()
+                            params.y = iY + dy.toInt()
+                            windowManager?.updateViewLayout(v, params)
+                        }
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!dragged) {
+                            AutoSwipeService.stopSwiping()
+                            hideStopFab()
+                            Toast.makeText(this@OverlayService, "🛑 자동 스와이프 정지", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                return true
+            }
+        })
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = 16
+            y = 200
+        }
+        windowManager?.addView(stopFabView, params)
+    }
+
+    fun hideStopFab() {
+        stopFabView?.let {
+            try { windowManager?.removeView(it) } catch (_: Exception) {}
+            stopFabView = null
+        }
+    }
+
     // 옵션 패널의 "자동 스와이프 시작/정지" 버튼
     private fun handleAutoSwipeButton(btn: Button) {
         if (AutoSwipeService.isSwiping) {
@@ -643,6 +717,8 @@ class OverlayService : Service() {
         hideOptionsPanel()
         Handler(Looper.getMainLooper()).postDelayed({
             AutoSwipeService.startSwiping()
+            // 시작과 동시에 floating 정지 mini-FAB 표시
+            showStopFab()
         }, 5000L)
     }
 
@@ -682,6 +758,7 @@ class OverlayService : Service() {
         removeResultView()
         hideCloseTarget()
         hideOptionsPanel()
+        hideStopFab()
         fabView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
         virtualDisplay?.release()
         mediaProjection?.stop()

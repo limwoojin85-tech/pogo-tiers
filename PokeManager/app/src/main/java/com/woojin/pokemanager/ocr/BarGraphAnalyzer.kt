@@ -137,15 +137,13 @@ object BarGraphAnalyzer {
         }
         val fillRatio = filledCount.toFloat() / barWidth
 
-        // 막대가 거의 안 보이면 (배경 전부) 분석 실패
-        if (lastFilledX < 0) return 0 to 0f
+        // 막대 자체를 못 찾으면 null (좌표 틀렸다는 신호 — false 0 반환 X)
+        if (lastFilledX < 0 || filledCount < 3) return null
 
-        // IV 0-15 — lastFilledX 의 막대 내 위치로 계산
-        // 막대 끝 (xEnd-1) 까지 채우면 IV 15. 절반 지점이면 IV 7~8.
+        // IV 0-15 — 막대는 3 segment (각 5 IV) 로 나뉨. lastFilledX 위치를 0-15 로 매핑.
         val pos = (lastFilledX - xStart + 1).toFloat() / barWidth
         val iv = (pos * 15f + 0.5f).toInt().coerceIn(0, 15)
 
-        // confidence — fillRatio 기반
         val conf = (fillRatio * 1.5f).coerceIn(0f, 1f)
         return iv to conf
     }
