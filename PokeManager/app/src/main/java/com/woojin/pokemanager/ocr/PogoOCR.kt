@@ -21,7 +21,9 @@ data class PogoScreenData(
     val ivBarsDef: Int? = null,
     val ivBarsSta: Int? = null,
     // 좌하단 별 배지의 칠해진 별 개수 (1-3) — IV 합 등급
-    val starsLit: Int? = null
+    val starsLit: Int? = null,
+    // 조사하기 화면 텍스트 분석 결과 (있으면 IV 정확도 결정)
+    val appraisal: AppraisalAnalyzer.AppraisalData? = null
 )
 
 object PogoOCR {
@@ -64,11 +66,17 @@ object PogoOCR {
         val bars = BarGraphAnalyzer.analyzeIvBars(src)
         val badge = BarGraphAnalyzer.analyzeStarBadge(src)
 
+        // 조사하기 화면이면 텍스트 분석 — 진짜 IV 정확도 (Calcy/PokeGenie 방식)
+        val appraisal = if (AppraisalAnalyzer.isAppraisalScreen(combined)) {
+            AppraisalAnalyzer.analyze(combined)
+        } else null
+
         return base.copy(
             ivBarsAtk = bars?.atk,
             ivBarsDef = bars?.def,
             ivBarsSta = bars?.sta,
-            starsLit = badge?.starsLit
+            starsLit = badge?.starsLit,
+            appraisal = appraisal
         )
     }
 
@@ -84,12 +92,19 @@ object PogoOCR {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val koLines = koreanText.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
+        // 조사하기 화면은 detail 위에 모달 — CP/HP/이름이 가려져 있을 수 있음.
+        // 조사하기 키워드만 있고 detail 정보 부족하면 이름만 추출 후 minimal 결과 반환.
+        val isAppraisal = AppraisalAnalyzer.isAppraisalScreen(text)
+
         val cp = extractCP(lines) ?: run {
-            lastFailReason = "CP 인식 실패"
+            if (!isAppraisal) lastFailReason = "CP 인식 실패"
+            // 조사하기 화면은 CP 없어도 OK — minimal data 반환
+            if (isAppraisal) return makeAppraisalOnlyData(koLines)
             return null
         }
         val hp = extractHP(lines) ?: run {
-            lastFailReason = "HP 인식 실패 (X/Y 패턴 없음)"
+            if (!isAppraisal) lastFailReason = "HP 인식 실패 (X/Y 패턴 없음)"
+            if (isAppraisal) return makeAppraisalOnlyData(koLines).copy(cp = cp)
             return null
         }
         // dust 는 강화 화면 전용 — detail 화면엔 없음. optional 로 둠 (없으면 0)
@@ -108,7 +123,8 @@ object PogoOCR {
             line.contains("kg", ignoreCase = true) ||
             line.matches(Regex(""".*\d+\.\d+\s*kg.*""", RegexOption.IGNORE_CASE))
         }
-        if (!hasWeight) {
+        // 조사하기 화면이면 kg 가드 skip (조사하기 위에 detail 가려짐)
+        if (!hasWeight && !isAppraisal) {
             lastFailReason = "체중 (kg) 인식 실패 — detail 화면 아닌 것으로 판단 (박스 list)"
             return null
         }
@@ -123,6 +139,16 @@ object PogoOCR {
             pokemonName = name,
             cp = cp, hp = hp, dustCost = dust,
             isShadow = isShadow, isPurified = isPurified
+        )
+    }
+
+    // 조사하기 화면 전용 minimal 데이터 — 이름만 추출, CP/HP 는 0
+    private fun makeAppraisalOnlyData(koLines: List<String>): PogoScreenData {
+        val name = extractKoreanName(koLines) ?: ""
+        return PogoScreenData(
+            pokemonName = name,
+            cp = 0, hp = 0, dustCost = 0,
+            isShadow = false, isPurified = false
         )
     }
 

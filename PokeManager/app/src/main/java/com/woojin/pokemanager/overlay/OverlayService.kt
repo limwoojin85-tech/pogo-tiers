@@ -72,6 +72,11 @@ class OverlayService : Service() {
     private var lastAnalyzedText = ""
     private var resultVisible = false
 
+    // 마지막 detail 분석 결과 캐시 — 조사하기 화면 들어왔을 때 결합용
+    private var lastDetailData: com.woojin.pokemanager.ocr.PogoScreenData? = null
+    private var lastDetailIvResults: List<com.woojin.pokemanager.calc.IVResult> = emptyList()
+    private var lastDetailSpecies: com.woojin.pokemanager.data.Species? = null
+
     // 분할화면에서 FAB 위치로 분석 영역 결정
     private var fabY = 0f
 
@@ -256,6 +261,22 @@ class OverlayService : Service() {
         data: com.woojin.pokemanager.ocr.PogoScreenData,
         profile: String = "main"
     ) {
+        // 조사하기 화면 도착 — CP=0 인 minimal 데이터. 마지막 detail 캐시 + appraisal filter 사용.
+        if (data.cp == 0 && data.appraisal != null && lastDetailData != null) {
+            val cached = lastDetailData!!
+            val refined = com.woojin.pokemanager.ocr.AppraisalAnalyzer.filterCandidates(
+                lastDetailIvResults, data.appraisal
+            )
+            // 결과 카드 갱신 — 캐시 + appraisal 좁힘
+            val pvp = if (refined.isNotEmpty() && lastDetailSpecies != null) {
+                val top = refined.first()
+                PvPRanker.rankAll(lastDetailSpecies!!.atk, lastDetailSpecies!!.def, lastDetailSpecies!!.sta,
+                    top.atkIV, top.defIV, top.stamIV)
+            } else emptyList()
+            showResult(cached.copy(appraisal = data.appraisal), refined, pvp, profile)
+            return
+        }
+
         val species = GameMasterRepo.findByNameFuzzy(data.pokemonName)
 
         var ivResults = if (species != null) {
@@ -288,6 +309,13 @@ class OverlayService : Service() {
                 sum in lo..hi
             }
             if (byStars.isNotEmpty()) ivResults = byStars
+        }
+
+        // detail 결과 캐시 — 곧이어 조사하기 화면 들어오면 이 캐시 + appraisal 결합
+        if (species != null) {
+            lastDetailData = data
+            lastDetailIvResults = ivResults
+            lastDetailSpecies = species
         }
 
         val pvpResults = if (ivResults.isNotEmpty()) {
