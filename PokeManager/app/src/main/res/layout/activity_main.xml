@@ -46,7 +46,7 @@
 
         <RadioButton
             android:id="@+id/rbModeSingle"
-            android:text="앱 하나만 (포고만 캡처)" />
+            android:text="앱 하나만 (단일 포고만 — 분할 분석 X)" />
     </RadioGroup>
 
     <TextView
@@ -55,7 +55,7 @@
         android:textSize="11sp"
         android:textColor="#D32F2F"
         android:layout_marginBottom="16dp"
-        android:text="⚠ '앱 하나' 모드 → 권한 다이얼로그에서 반드시 '포켓몬GO' 를 선택하세요 (PokeManager 자체를 선택하면 자기 화면만 캡처됨)" />
+        android:text="• 분할화면에서 좌/우 양쪽 다 분석하려면 '전체 화면' 모드만 가능 (안드로이드 보안 제약)\n• '앱 하나' 모드에선 권한 다이얼로그에서 반드시 '포켓몬GO' 선택" />
 
     <Button
         android:id="@+id/btnToggle"

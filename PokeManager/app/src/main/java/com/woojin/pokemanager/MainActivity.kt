@@ -2,6 +2,7 @@ package com.woojin.pokemanager
 
 import android.app.Activity
 import android.content.Intent
+import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.*
@@ -78,7 +79,24 @@ class MainActivity : AppCompatActivity() {
         }
 
         val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        projectionLauncher.launch(mgr.createScreenCaptureIntent())
+        val intent = if (OverlayService.captureMode == "full" &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14+ — 전체 화면 강제 (시스템의 user-choice dialog 우회)
+            // 이게 없으면 Samsung One UI 6.x 에서 dialog 가 "앱 하나만" 만 보여줘서
+            // 분할화면 양쪽 캡처 불가능. createConfigForDefaultDisplay 로 강제.
+            try {
+                mgr.createScreenCaptureIntent(
+                    MediaProjectionConfig.createConfigForDefaultDisplay()
+                )
+            } catch (_: Throwable) {
+                // 일부 디바이스에서 미지원 — fallback 으로 default dialog
+                mgr.createScreenCaptureIntent()
+            }
+        } else {
+            // "앱 하나" 모드 — 사용자가 dialog 에서 포고 선택
+            mgr.createScreenCaptureIntent()
+        }
+        projectionLauncher.launch(intent)
     }
 
     private fun startOverlayService(resultCode: Int, data: Intent) {
