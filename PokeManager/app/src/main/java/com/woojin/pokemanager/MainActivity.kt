@@ -39,10 +39,11 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tvStatus)
         rgCaptureMode = findViewById(R.id.rgCaptureMode)
 
-        // default — 단일 캡처 + 모든 자동 동작 OFF (사용자 수동 컨트롤)
+        // default — 단일 캡처 + 자동 스캔/저장 ON (사용자가 swipe 마다 자동 분석)
+        // 박스 list false-positive 는 PogoOCR.kg 가드로 차단
         OverlayService.captureMode = "single"
-        OverlayService.autoScan = false
-        OverlayService.autoSave = false
+        OverlayService.autoScan = true
+        OverlayService.autoSave = true
         OverlayService.clipboardCopy = false
 
         GameMasterRepo.load(this)

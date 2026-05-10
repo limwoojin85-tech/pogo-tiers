@@ -45,11 +45,12 @@ class OverlayService : Service() {
         // 사용자가 매뉴얼로 선택한 캡처 모드 — "single" (앱 하나) / "full" (전체)
         var captureMode: String = "single"
 
-        // ── 자동 동작 toggle — default 전부 OFF (사용자 100% 컨트롤)
-        var autoScan: Boolean = false
-        var autoSave: Boolean = false
+        // ── 자동 동작 toggle
+        // autoScan default ON — 사용자가 수동 swipe 해도 자동 분석. 박스 list 는 PogoOCR 의 kg 가드로 차단.
+        // autoSave 도 default ON — DB 자동 누적 (사용자 클릭 없이)
+        var autoScan: Boolean = true
+        var autoSave: Boolean = true
         var clipboardCopy: Boolean = false
-        // 방출 추천 마리 (transfer/transfer_dup) 만나면 자동 스와이프 일시정지 → 사용자가 수동 방출 → 다시 시작
         var pauseOnTransfer: Boolean = true
     }
 
