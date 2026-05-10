@@ -288,13 +288,15 @@ class OverlayService : Service() {
             )
         } else emptyList()
 
-        // 막대 그래프에서 직접 읽은 IV 가 있으면 — CP/HP 매칭 후보 중에서 막대 IV ±1 범위로 필터
-        // (막대 픽셀 분석은 ±1 오차 가능)
+        // 막대 그래프 IV 가 있으면 — 픽셀 분석 노이즈 감안 ±2 까지 허용
+        // ± 1 은 너무 엄격해서 후보 0 → filter 무효 케이스 자주 발생.
+        // 막대 픽셀이 트레이너 캐릭터 색에 false-positive 되면 atk/def 가 15 로 잘못 잡힘 →
+        // 그래도 일부 후보는 통과시켜 사용자 검토 가능하게.
         if (data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null) {
             val filtered = ivResults.filter {
-                kotlin.math.abs(it.atkIV - data.ivBarsAtk) <= 1 &&
-                kotlin.math.abs(it.defIV - data.ivBarsDef) <= 1 &&
-                kotlin.math.abs(it.stamIV - data.ivBarsSta) <= 1
+                kotlin.math.abs(it.atkIV - data.ivBarsAtk) <= 2 &&
+                kotlin.math.abs(it.defIV - data.ivBarsDef) <= 2 &&
+                kotlin.math.abs(it.stamIV - data.ivBarsSta) <= 2
             }
             if (filtered.isNotEmpty()) ivResults = filtered
         }
@@ -322,14 +324,18 @@ class OverlayService : Service() {
             lastDetailSpecies = species
         }
 
-        // canTrust = 막대 OR 조사하기 + 후보 ≤ 5. 그 외엔 카드 안 띄움 (자의적 결과 X).
+        // canTrust = 정확 (막대 OR 조사하기) AND 후보 ≤ 5
+        // 그 외에도 막대만 잡혔으면 카드는 띄우되 hint 에 "정확도 낮음" 표시
         val haveBars = data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null
         val haveAppraisal = data.appraisal != null
         val canTrust = (haveBars || haveAppraisal) && ivResults.size <= 5 && species != null
-        if (!canTrust) {
-            Log.i("PokeManager-Overlay", "SKIP card: canTrust=false (bars=$haveBars appraisal=$haveAppraisal cands=${ivResults.size})")
+        // showRough = 막대 잡혔지만 후보 많음 (사용자가 보고 검토)
+        val showRough = haveBars && species != null && ivResults.size in 6..50
+        if (!canTrust && !showRough) {
+            Log.i("PokeManager-Overlay", "SKIP card: bars=$haveBars appraisal=$haveAppraisal cands=${ivResults.size} species=${species?.id}")
             return
         }
+        Log.i("PokeManager-Overlay", "SHOW card: trust=$canTrust rough=$showRough cands=${ivResults.size}")
 
         val pvpResults = if (ivResults.isNotEmpty()) {
             val top = ivResults.first()
@@ -465,7 +471,6 @@ class OverlayService : Service() {
         } else {
             val top = ivResults.first()
             val pct = (top.perfection * 100)
-            // ★ 핵심 정직 규칙: 막대 분석 OR 조사하기 텍스트 둘 중 하나라도 있어야 IV 표시
             val haveBars = data.ivBarsAtk != null && data.ivBarsDef != null && data.ivBarsSta != null
             val haveAppraisal = data.appraisal != null
             val canTrust = (haveBars || haveAppraisal) && ivResults.size <= 5
@@ -474,8 +479,13 @@ class OverlayService : Service() {
                 tvIV.text = "%.0f%%".format(pct)
                 tvIvBreakdown.text = "(${top.atkIV}-${top.defIV}-${top.stamIV})"
                 tvCpLv.text = "CP ${data.cp}, Lv %.1f".format(top.level)
+            } else if (haveBars) {
+                // 막대만 잡힘 — 막대 IV 보여주고 "정확도 낮음" 표시
+                val barPct = (data.ivBarsAtk!! + data.ivBarsDef!! + data.ivBarsSta!!) / 45f * 100
+                tvIV.text = "~%.0f%%".format(barPct)
+                tvIvBreakdown.text = "막대 ${data.ivBarsAtk}-${data.ivBarsDef}-${data.ivBarsSta}"
+                tvCpLv.text = "CP ${data.cp} • ⚠ 정확도 낮음"
             } else {
-                // 막대 / 조사하기 정보 없음 — IV 단정 X. CP/HP 만 표시.
                 tvIV.text = "?"
                 tvIvBreakdown.text = "조사하기 필요"
                 tvCpLv.text = "CP ${data.cp}, HP ${data.hp}"
