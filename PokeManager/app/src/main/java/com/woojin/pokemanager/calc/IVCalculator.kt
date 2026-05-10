@@ -80,6 +80,16 @@ object IVCalculator {
     }
 
     fun levelsForDust(dustCost: Int, isShadow: Boolean = false, isPurified: Boolean = false): List<Float> {
+        // 별가루 정보 없음 (detail 화면엔 dust 표시 안 됨) — 모든 레벨 1.0~51.0 시도
+        if (dustCost <= 0) {
+            val all = mutableListOf<Float>()
+            var lv = 1.0f
+            while (lv <= 51.01f) {
+                all.add(lv)
+                lv += 0.5f
+            }
+            return all
+        }
         val normalized = when {
             isShadow -> dustToLevelRange.keys.minByOrNull { kotlin.math.abs(it - (dustCost / 1.2f).toInt()) }
             isPurified -> dustToLevelRange.keys.minByOrNull { kotlin.math.abs(it - (dustCost / 0.9f).toInt()) }

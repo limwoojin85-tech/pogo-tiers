@@ -93,6 +93,12 @@ object PogoOCR {
                 && !line.contains("캡처") && !line.contains("오버레이")
                 && !line.contains("포고만") && !line.contains("앱하나")
                 && !line.contains("PokeManager") && !line.contains("pokemanager")
+                // 자기 result overlay 의 텍스트 (자기 자신 OCR 노이즈 방지)
+                && !line.contains("포켓몬데이터")
+                && !line.contains("데이터없음") && !line.contains("데이터 없음")
+                && !line.contains("계산불가") && !line.contains("계산 불가")
+                && !line.contains("결정:") && !line.contains("리그")
+                && !line.contains("순위") && !line.contains("저장")
         }
         // 한글 비율 높은 순
         val raw = candidates.maxByOrNull { line ->

@@ -173,6 +173,9 @@ class OverlayService : Service() {
             while (isActive) {
                 delay(1000)
                 try {
+                    // 결과창 떠있는 동안엔 자동 스캔 중지 — 자기 자신 OCR 노이즈 방지
+                    if (resultVisible) continue
+
                     val bitmap = captureBitmap() ?: continue
 
                     // 캡처 mode 가 single 이면 그냥 전체 분석
@@ -468,6 +471,8 @@ class OverlayService : Service() {
             resultView = null
         }
         resultVisible = false
+        // 같은 화면 다시 들어가면 또 분석되도록 cache 리셋
+        lastAnalyzedText = ""
     }
 
     override fun onDestroy() {
