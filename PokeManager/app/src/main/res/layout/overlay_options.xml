@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FAB long-press 시 뜨는 작은 옵션 패널 (PokeGenie 의 토글 메뉴 처럼) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/result_card_bg"
+    android:padding="12dp"
+    android:elevation="8dp">
+
+    <TextView
+        android:text="옵션"
+        android:textColor="#222"
+        android:textStyle="bold"
+        android:textSize="13sp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp" />
+
+    <CheckBox
+        android:id="@+id/optAutoScan"
+        android:text="자동 스캔 (1초마다)"
+        android:textColor="#222"
+        android:textSize="12sp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
+    <CheckBox
+        android:id="@+id/optAutoSave"
+        android:text="자동 저장"
+        android:textColor="#222"
+        android:textSize="12sp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
+    <CheckBox
+        android:id="@+id/optClipboard"
+        android:text="클립보드 복사"
+        android:textColor="#222"
+        android:textSize="12sp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#22000000"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="6dp" />
+
+    <Button
+        android:id="@+id/btnOptionsClose"
+        android:text="닫기"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:layout_gravity="end"
+        style="@style/Widget.Material3.Button.OutlinedButton" />
+</LinearLayout>

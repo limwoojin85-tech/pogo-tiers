@@ -49,44 +49,13 @@
             android:text="전체 화면 (실험적)" />
     </RadioGroup>
 
-    <!-- ─── 자동 동작 toggle (모두 default OFF — 수동 분석이 default) -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="자동 동작 (옵션)"
-        android:textSize="13sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="4dp" />
-
-    <CheckBox
-        android:id="@+id/cbAutoScan"
-        android:text="자동 스캔 (1초마다 화면 polling)"
-        android:checked="false"
-        android:layout_width="240dp"
-        android:layout_height="wrap_content" />
-
-    <CheckBox
-        android:id="@+id/cbAutoSave"
-        android:text="자동 저장 (분석 즉시 DB insert)"
-        android:checked="false"
-        android:layout_width="240dp"
-        android:layout_height="wrap_content" />
-
-    <CheckBox
-        android:id="@+id/cbClipboard"
-        android:text="클립보드 자동 복사 (이름+IV%)"
-        android:checked="false"
-        android:layout_width="240dp"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp" />
-
     <TextView
         android:layout_width="240dp"
         android:layout_height="wrap_content"
         android:textSize="11sp"
         android:textColor="#666"
         android:layout_marginBottom="16dp"
-        android:text="• default = 수동 모드. 몬스터볼 FAB 탭하면 그때만 1회 분석\n• 자동 스캔 ON 시에만 polling. 셋 다 ON = 자동 스와이프 모드" />
+        android:text="• 권한 다이얼로그에서 '포켓몬GO' 선택\n• 옵션 (자동 스캔/저장/클립보드) 은 몬스터볼 길게 누르면 나타남\n• 몬스터볼을 화면 하단 X 영역으로 드래그 → 종료" />
 
     <Button
         android:id="@+id/btnToggle"

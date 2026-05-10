@@ -1,130 +1,105 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- PokeGenie iVision 스타일 — 작은 카드 (좌상단), 핵심 5줄 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
+    android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="#EE1A237E"
-    android:padding="16dp">
+    android:background="@drawable/result_card_bg"
+    android:padding="10dp"
+    android:elevation="8dp">
 
+    <!-- 1줄: 이름 (작게) -->
     <TextView
         android:id="@+id/tvName"
-        android:text="포켓몬 이름"
-        android:textColor="#FFFFFF"
-        android:textSize="20sp"
+        android:text="화살꼬빈"
+        android:textColor="#222"
+        android:textSize="12sp"
         android:textStyle="bold"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="2dp" />
+
+    <!-- 2줄: IV % + Atk-Def-Sta (강조 큰 글씨) -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <TextView
+            android:text="IV"
+            android:textColor="#444"
+            android:textSize="11sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp" />
+
+        <TextView
+            android:id="@+id/tvIV"
+            android:text="38%"
+            android:textColor="#000"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp" />
+
+        <TextView
+            android:id="@+id/tvIvBreakdown"
+            android:text="(4-9-4)"
+            android:textColor="#555"
+            android:textSize="12sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <!-- 3-5줄: 슈/하/마 리그 (한 줄씩, 컴팩트) -->
+    <TextView
+        android:id="@+id/tvLeagueGL"
+        android:text="🏆 67.9% (0)"
+        android:textColor="#388E3C"
+        android:textSize="11sp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="1dp" />
+
+    <TextView
+        android:id="@+id/tvLeagueUL"
+        android:text="🥇 41.1% (2)"
+        android:textColor="#1976D2"
+        android:textSize="11sp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="1dp" />
+
+    <TextView
+        android:id="@+id/tvLeagueML"
+        android:text="🥈 27.1% (2)"
+        android:textColor="#616161"
+        android:textSize="11sp"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="4dp" />
 
+    <!-- 6줄: CP + Lv -->
     <TextView
-        android:id="@+id/tvCP"
-        android:text="CP 0  HP 0  먼지 0"
-        android:textColor="#B3E5FC"
-        android:textSize="13sp"
+        android:id="@+id/tvCpLv"
+        android:text="CP 382, Lv 20.0"
+        android:textColor="#222"
+        android:textSize="11sp"
+        android:textStyle="bold"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp" />
+        android:layout_marginBottom="2dp" />
 
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#44FFFFFF"
-        android:layout_marginBottom="8dp" />
-
+    <!-- 7줄 (옵션): 결정 / 후보 개수 알림 -->
     <TextView
-        android:id="@+id/tvIV"
+        android:id="@+id/tvHint"
         android:text=""
-        android:textColor="#FFFFFF"
-        android:textSize="15sp"
+        android:textColor="#D32F2F"
+        android:textSize="10sp"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp" />
-
-    <TextView
-        android:id="@+id/tvLeague"
-        android:text=""
-        android:textColor="#FFD54F"
-        android:textSize="13sp"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp" />
-
-    <!-- 별가루 입력 — IV 후보 좁히기 (detail 화면엔 별가루 없음) -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginBottom="8dp">
-
-        <TextView
-            android:text="별가루:"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp" />
-
-        <EditText
-            android:id="@+id/etDust"
-            android:hint="2500"
-            android:textColorHint="#80FFFFFF"
-            android:textColor="#FFFFFF"
-            android:inputType="number"
-            android:textSize="13sp"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp" />
-
-        <Button
-            android:id="@+id/btnRecalc"
-            android:text="재계산"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            style="@style/Widget.Material3.Button.TonalButton" />
-    </LinearLayout>
-
-    <!-- 후보 list — perfection 별 모든 가능 IV 조합 (스크롤) -->
-    <ScrollView
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:maxHeight="180dp"
-        android:layout_marginBottom="8dp">
-
-        <TextView
-            android:id="@+id/tvCandidates"
-            android:text=""
-            android:textColor="#E0E0E0"
-            android:textSize="11sp"
-            android:fontFamily="monospace"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-    </ScrollView>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="end">
-
-        <Button
-            android:id="@+id/btnSave"
-            android:text="저장"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:layout_marginEnd="8dp"
-            style="@style/Widget.Material3.Button.TonalButton" />
-
-        <Button
-            android:id="@+id/btnClose"
-            android:text="닫기"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:textColor="#FFFFFF" />
-
-    </LinearLayout>
+        android:layout_height="wrap_content" />
 
 </LinearLayout>

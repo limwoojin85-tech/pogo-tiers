@@ -20,9 +20,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnToggle: Button
     private lateinit var tvStatus: TextView
     private lateinit var rgCaptureMode: RadioGroup
-    private lateinit var cbAutoScan: CheckBox
-    private lateinit var cbAutoSave: CheckBox
-    private lateinit var cbClipboard: CheckBox
 
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -41,9 +38,6 @@ class MainActivity : AppCompatActivity() {
         btnToggle = findViewById(R.id.btnToggle)
         tvStatus = findViewById(R.id.tvStatus)
         rgCaptureMode = findViewById(R.id.rgCaptureMode)
-        cbAutoScan = findViewById(R.id.cbAutoScan)
-        cbAutoSave = findViewById(R.id.cbAutoSave)
-        cbClipboard = findViewById(R.id.cbClipboard)
 
         // default — 단일 캡처 + 모든 자동 동작 OFF (사용자 수동 컨트롤)
         OverlayService.captureMode = "single"
@@ -57,16 +51,6 @@ class MainActivity : AppCompatActivity() {
         rgCaptureMode.setOnCheckedChangeListener { _, checkedId ->
             OverlayService.captureMode =
                 if (checkedId == R.id.rbModeSingle) "single" else "full"
-        }
-        cbAutoScan.setOnCheckedChangeListener { _, checked ->
-            OverlayService.autoScan = checked
-            updateUI()
-        }
-        cbAutoSave.setOnCheckedChangeListener { _, checked ->
-            OverlayService.autoSave = checked
-        }
-        cbClipboard.setOnCheckedChangeListener { _, checked ->
-            OverlayService.clipboardCopy = checked
         }
         findViewById<Button>(R.id.btnAutoSwipe).setOnClickListener { toggleAutoSwipe() }
         findViewById<Button>(R.id.btnMyPokemon).setOnClickListener {
@@ -89,12 +73,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // 시작 직전 captureMode + 자동 동작 toggle 들 확정
+        // 시작 직전 captureMode 만 확정 (자동 toggle 들은 FAB 옵션 메뉴에서 변경)
         OverlayService.captureMode =
             if (rgCaptureMode.checkedRadioButtonId == R.id.rbModeSingle) "single" else "full"
-        OverlayService.autoScan = cbAutoScan.isChecked
-        OverlayService.autoSave = cbAutoSave.isChecked
-        OverlayService.clipboardCopy = cbClipboard.isChecked
 
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "화면 위에 표시 권한을 허용해주세요", Toast.LENGTH_LONG).show()

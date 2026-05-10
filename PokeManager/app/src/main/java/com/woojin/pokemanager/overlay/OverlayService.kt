@@ -61,6 +61,8 @@ class OverlayService : Service() {
     // 오버레이 뷰들
     private var fabView: View? = null
     private var resultView: View? = null
+    private var fabCloseView: View? = null   // FAB 드래그 시 하단 X 영역
+    private var optionsView: View? = null    // FAB long-press 옵션 패널
 
     // 자동 스캔 상태
     private var autoScanJob: Job? = null
@@ -267,23 +269,6 @@ class OverlayService : Service() {
             PvPRanker.rankAll(species!!.atk, species.def, species.sta, top.atkIV, top.defIV, top.stamIV)
         } else emptyList()
 
-        // ── 자동 저장 — 사용자 클릭 없이 즉시 DB insert (auto-swipe 와 함께)
-        if (autoSave && ivResults.isNotEmpty() && species != null) {
-            val top = ivResults.first()
-            scope.launch(Dispatchers.IO) {
-                AppDatabase.get(applicationContext).pokemonDao().insert(
-                    MyPokemon(
-                        speciesId = species.id,
-                        cp = data.cp, hp = data.hp, dustCost = data.dustCost,
-                        atkIV = top.atkIV, defIV = top.defIV, stamIV = top.stamIV,
-                        level = top.level, perfection = top.perfection,
-                        isShadow = data.isShadow, isPurified = data.isPurified,
-                        profile = profile
-                    )
-                )
-            }
-        }
-
         showResult(data, ivResults, pvpResults, profile)
     }
 
@@ -310,40 +295,52 @@ class OverlayService : Service() {
         fabView!!.setOnTouchListener(object : View.OnTouchListener {
             private var initX = 0; private var initY = 0
             private var touchX = 0f; private var touchY = 0f
+            private var downTime = 0L
+            private var dragging = false
+            private var longPressFired = false
+            private val longPressRunnable = Runnable {
+                longPressFired = true
+                showOptionsPanel()
+            }
+
             override fun onTouch(v: View, e: MotionEvent): Boolean {
                 when (e.action) {
                     MotionEvent.ACTION_DOWN -> {
                         initX = params.x; initY = params.y
                         touchX = e.rawX; touchY = e.rawY
+                        downTime = System.currentTimeMillis()
+                        dragging = false
+                        longPressFired = false
+                        v.handler.postDelayed(longPressRunnable, 600L)
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        params.x = initX + (e.rawX - touchX).toInt()
-                        params.y = initY + (e.rawY - touchY).toInt()
-                        fabY = params.y.toFloat()
-                        windowManager?.updateViewLayout(fabView, params)
-
-                        // FAB 위치로 분할화면 모드 자동 설정
-                        // 가로/세로 화면에 따라 좌/우 (3,4) 또는 위/아래 (1,2) 분할
-                        val screenW = resources.displayMetrics.widthPixels
-                        val screenH = resources.displayMetrics.heightPixels
-                        val landscape = screenW >= screenH
-                        splitMode = if (landscape) {
-                            when {
-                                params.x < screenW * 0.35f -> 3   // 좌측
-                                params.x > screenW * 0.65f -> 4   // 우측
-                                else -> 0
-                            }
-                        } else {
-                            when {
-                                params.y < screenH * 0.35f -> 1   // 상단
-                                params.y > screenH * 0.65f -> 2   // 하단
-                                else -> 0
-                            }
+                        val dx = e.rawX - touchX
+                        val dy = e.rawY - touchY
+                        if (!dragging && (Math.abs(dx) > 20 || Math.abs(dy) > 20)) {
+                            dragging = true
+                            v.handler.removeCallbacks(longPressRunnable)
+                            showCloseTarget()
+                        }
+                        if (dragging) {
+                            params.x = initX + dx.toInt()
+                            params.y = initY + dy.toInt()
+                            fabY = params.y.toFloat()
+                            windowManager?.updateViewLayout(fabView, params)
+                            highlightCloseIfHover(e.rawX, e.rawY)
                         }
                     }
-                    MotionEvent.ACTION_UP -> {
-                        if (Math.abs(e.rawX - touchX) < 10 && Math.abs(e.rawY - touchY) < 10) {
-                            // 탭: 수동 캡처 트리거 (현재 splitMode 의 영역 분석)
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        v.handler.removeCallbacks(longPressRunnable)
+                        if (dragging) {
+                            // X 영역 위에서 놓았으면 service 종료
+                            if (isOverCloseTarget(e.rawX, e.rawY)) {
+                                hideCloseTarget()
+                                stopSelf()
+                                return true
+                            }
+                            hideCloseTarget()
+                        } else if (!longPressFired) {
+                            // 짧은 탭 → 수동 캡처
                             scope.launch(Dispatchers.IO) {
                                 val bitmap = captureBitmap() ?: return@launch
                                 val crop = getCropRect(bitmap.width, bitmap.height)
@@ -374,104 +371,56 @@ class OverlayService : Service() {
         resultView = inflater.inflate(R.layout.overlay_result, null)
 
         val tvName = resultView!!.findViewById<TextView>(R.id.tvName)
-        val tvCP = resultView!!.findViewById<TextView>(R.id.tvCP)
         val tvIV = resultView!!.findViewById<TextView>(R.id.tvIV)
-        val tvLeague = resultView!!.findViewById<TextView>(R.id.tvLeague)
-        val tvCandidates = resultView!!.findViewById<TextView>(R.id.tvCandidates)
-        val etDust = resultView!!.findViewById<EditText>(R.id.etDust)
-        val btnRecalc = resultView!!.findViewById<Button>(R.id.btnRecalc)
-        val btnSave = resultView!!.findViewById<Button>(R.id.btnSave)
-        val btnClose = resultView!!.findViewById<Button>(R.id.btnClose)
+        val tvIvBreakdown = resultView!!.findViewById<TextView>(R.id.tvIvBreakdown)
+        val tvLeagueGL = resultView!!.findViewById<TextView>(R.id.tvLeagueGL)
+        val tvLeagueUL = resultView!!.findViewById<TextView>(R.id.tvLeagueUL)
+        val tvLeagueML = resultView!!.findViewById<TextView>(R.id.tvLeagueML)
+        val tvCpLv = resultView!!.findViewById<TextView>(R.id.tvCpLv)
+        val tvHint = resultView!!.findViewById<TextView>(R.id.tvHint)
 
         val species = GameMasterRepo.findByNameFuzzy(data.pokemonName)
-        // 프로필 prefix — 분할화면 좌/우 어느 쪽에서 잡혔는지 표시
         val profPrefix = when (profile) {
             "split_a" -> "[A] "
             "split_b" -> "[B] "
             else -> ""
         }
         tvName.text = profPrefix + (species?.nameKo ?: data.pokemonName.ifEmpty { "알 수 없음" })
-        tvCP.text = "CP ${data.cp}  HP ${data.hp}" +
-            (if (data.dustCost > 0) "  먼지 ${data.dustCost}" else "")
 
-        // IV 표시 + 후보 list — 함수로 빼서 재계산 시 재사용
-        renderIvAndCandidates(tvIV, tvCandidates, ivResults, data)
-
-        // 사용자가 별가루 입력 + 재계산 → 후보 좁히기
-        // detail 화면엔 별가루 표시 안 됨. "강화" 메뉴 들어가면 보임 — 사용자가 그것 보고 입력.
-        if (data.dustCost > 0) {
-            etDust.setText(data.dustCost.toString())
-        }
-        btnRecalc.setOnClickListener {
-            val dustInput = etDust.text.toString().trim().toIntOrNull() ?: 0
-            if (dustInput <= 0 || species == null) {
-                Toast.makeText(this, "별가루 숫자 입력 필요", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            val recalc = IVCalculator.calculate(
-                species.atk, species.def, species.sta,
-                data.cp, data.hp, dustInput,
-                data.isShadow, data.isPurified
-            )
-            renderIvAndCandidates(tvIV, tvCandidates, recalc, data.copy(dustCost = dustInput))
-            // 결정 라벨 + PvP 도 다시
-            val pvp = if (recalc.isNotEmpty()) {
-                val top = recalc.first()
-                PvPRanker.rankAll(species.atk, species.def, species.sta, top.atkIV, top.defIV, top.stamIV)
-            } else emptyList()
-            tvLeague.text = pvp.joinToString("\n") { "${it.league}: 순위 ${it.rank} (CP ${it.bestCP})" }
-            if (recalc.isNotEmpty()) {
-                val top = recalc.first()
-                val meta = GameMasterRepo.meta(species.id)
-                val gc = GameMasterRepo.classifyGroup(species.id)
-                val dec = BucketClassifier.classify(species.id, top.atkIV, top.defIV, top.stamIV, data.cp, meta, gc)
-                tvLeague.text = (tvLeague.text?.toString().orEmpty() +
-                    "\n\n📋 결정: ${dec.bucket.label}\n${dec.reason}").trimStart()
-            }
-            Toast.makeText(this, "재계산 — 후보 ${recalc.size}개", Toast.LENGTH_SHORT).show()
-        }
-
-        if (pvpResults.isNotEmpty()) {
-            tvLeague.text = pvpResults.joinToString("\n") {
-                "${it.league}: 순위 ${it.rank} (CP ${it.bestCP})"
-            }
+        if (ivResults.isEmpty() || species == null) {
+            tvIV.text = "—"
+            tvIvBreakdown.text = "(데이터 없음)"
+            tvLeagueGL.visibility = View.GONE
+            tvLeagueUL.visibility = View.GONE
+            tvLeagueML.visibility = View.GONE
+            tvCpLv.text = "CP ${data.cp}  HP ${data.hp}"
+            tvHint.text = ""
         } else {
-            tvLeague.text = ""
-        }
-
-        // ─── 사이트 8 bucket 결정 — 즉시 표시 (보관 / 송출 등)
-        if (ivResults.isNotEmpty() && species != null) {
             val top = ivResults.first()
-            val meta = GameMasterRepo.meta(species.id)
-            val groupClass = GameMasterRepo.classifyGroup(species.id)
-            val decision = BucketClassifier.classify(
-                sid = species.id,
-                ivAtk = top.atkIV, ivDef = top.defIV, ivStam = top.stamIV,
-                cp = data.cp,
-                species = meta,
-                groupClass = groupClass
-            )
-            // tvLeague 아래에 결정 라벨 추가
-            tvLeague.text = (tvLeague.text?.toString().orEmpty() +
-                "\n\n📋 결정: ${decision.bucket.label}\n${decision.reason}").trimStart()
+            val pct = (top.perfection * 100)
+            tvIV.text = "%.0f%%".format(pct)
+            tvIvBreakdown.text = "(${top.atkIV}-${top.defIV}-${top.stamIV})"
+            tvCpLv.text = "CP ${data.cp}, Lv %.1f".format(top.level)
 
-            // 클립보드 복사 — toggle ON 일 때만 (default OFF — 사용자 짜증 방지)
+            // 리그 한 줄씩 — leagueCap 으로 매칭 (1500/2500/MAX)
+            renderLeagueLine(tvLeagueGL, "🏆", pvpResults.find { it.leagueCap == 1500 })
+            renderLeagueLine(tvLeagueUL, "🥇", pvpResults.find { it.leagueCap == 2500 })
+            renderLeagueLine(tvLeagueML, "🥈", pvpResults.find { it.leagueCap == Int.MAX_VALUE })
+
+            // 후보 N개 알림 (별가루 모를 때)
+            tvHint.text = if (data.dustCost <= 0 && ivResults.size > 3)
+                "후보 ${ivResults.size}개 — 강화 화면 가서 다시 탭"
+            else ""
+
+            // 클립보드 (옵션)
             if (clipboardCopy) {
-                val perfPct = (top.perfection * 100).toInt()
-                val nickname = "${species.nameKo}${perfPct}"
+                val nickname = "${species.nameKo}${pct.toInt()}"
                 val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("PokeManager", nickname))
-                if (!autoSave) {
-                    Toast.makeText(this, "📋 \"${nickname}\" 복사됨", Toast.LENGTH_SHORT).show()
-                }
             }
-        }
 
-        btnClose.setOnClickListener { removeResultView() }
-
-        btnSave.setOnClickListener {
-            if (ivResults.isNotEmpty() && species != null) {
-                val top = ivResults.first()
+            // 자동 저장 (옵션)
+            if (autoSave) {
                 scope.launch(Dispatchers.IO) {
                     AppDatabase.get(applicationContext).pokemonDao().insert(
                         MyPokemon(
@@ -483,19 +432,115 @@ class OverlayService : Service() {
                             profile = profile
                         )
                     )
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(applicationContext,
-                            "저장됨 (${profPrefix.trim().ifEmpty { "main" }})",
-                            Toast.LENGTH_SHORT).show()
-                        removeResultView()
-                    }
                 }
             }
         }
 
-        val screenW = resources.displayMetrics.widthPixels
+        // 카드 탭 → 닫기 (PokeGenie 처럼)
+        resultView!!.setOnClickListener { removeResultView() }
+
         val params = WindowManager.LayoutParams(
-            (screenW * 0.9f).toInt(),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 16
+            y = resources.displayMetrics.heightPixels / 4
+        }
+
+        windowManager?.addView(resultView, params)
+        resultVisible = true
+
+        // 자동 모드 (autoScan + autoSave) 시에만 빠른 자동 닫기. 수동 모드는 사용자 탭 시 닫힘.
+        if (autoScan && autoSave) {
+            scope.launch { delay(2000L); removeResultView() }
+        }
+    }
+
+    private fun renderLeagueLine(tv: TextView, icon: String, league: com.woojin.pokemanager.calc.LeagueResult?) {
+        if (league == null) {
+            tv.visibility = View.GONE
+            return
+        }
+        tv.visibility = View.VISIBLE
+        tv.text = "$icon 순위 ${league.rank} (CP ${league.bestCP})"
+    }
+
+    // ──────────────────────── FAB 드래그 → 종료 X 영역
+    private fun showCloseTarget() {
+        if (fabCloseView != null) return
+        val inflater = LayoutInflater.from(this)
+        fabCloseView = inflater.inflate(R.layout.overlay_fab_close, null)
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = 80
+        }
+        windowManager?.addView(fabCloseView, params)
+    }
+
+    private fun hideCloseTarget() {
+        fabCloseView?.let {
+            try { windowManager?.removeView(it) } catch (_: Exception) {}
+            fabCloseView = null
+        }
+    }
+
+    private fun isOverCloseTarget(rawX: Float, rawY: Float): Boolean {
+        val v = fabCloseView ?: return false
+        val loc = IntArray(2); v.getLocationOnScreen(loc)
+        val cx = loc[0] + v.width / 2f
+        val cy = loc[1] + v.height / 2f
+        val dx = rawX - cx; val dy = rawY - cy
+        return Math.sqrt((dx * dx + dy * dy).toDouble()) < v.width / 2.0 + 30
+    }
+
+    private fun highlightCloseIfHover(rawX: Float, rawY: Float) {
+        fabCloseView?.alpha = if (isOverCloseTarget(rawX, rawY)) 1.0f else 0.7f
+    }
+
+    // ──────────────────────── FAB long-press → 옵션 패널
+    private fun showOptionsPanel() {
+        if (optionsView != null) {
+            hideOptionsPanel(); return
+        }
+        val inflater = LayoutInflater.from(this)
+        optionsView = inflater.inflate(R.layout.overlay_options, null)
+
+        val cbScan = optionsView!!.findViewById<CheckBox>(R.id.optAutoScan)
+        val cbSave = optionsView!!.findViewById<CheckBox>(R.id.optAutoSave)
+        val cbClip = optionsView!!.findViewById<CheckBox>(R.id.optClipboard)
+        val btnClose = optionsView!!.findViewById<Button>(R.id.btnOptionsClose)
+
+        cbScan.isChecked = autoScan
+        cbSave.isChecked = autoSave
+        cbClip.isChecked = clipboardCopy
+
+        cbScan.setOnCheckedChangeListener { _, c ->
+            val wasOff = !autoScan
+            autoScan = c
+            if (c && wasOff) startAutoScan()
+            else if (!c) autoScanJob?.cancel()
+        }
+        cbSave.setOnCheckedChangeListener { _, c -> autoSave = c }
+        cbClip.setOnCheckedChangeListener { _, c -> clipboardCopy = c }
+        btnClose.setOnClickListener { hideOptionsPanel() }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -503,55 +548,16 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = 100
+            gravity = Gravity.TOP or Gravity.START
+            x = 80; y = 80
         }
-
-        windowManager?.addView(resultView, params)
-        resultVisible = true
-
-        // 자동 모드 (autoScan=true + autoSave=true) 일 때만 1.5초 자동 닫기.
-        // 그 외 (수동 분석) 엔 사용자가 닫기 버튼 누를 때까지 대기.
-        if (autoScan && autoSave) {
-            scope.launch {
-                delay(1500L)
-                removeResultView()
-            }
-        }
+        windowManager?.addView(optionsView, params)
     }
 
-    // IV + 후보 list 렌더링 — showResult 와 재계산 둘 다에서 호출
-    private fun renderIvAndCandidates(
-        tvIV: TextView, tvCandidates: TextView,
-        ivResults: List<com.woojin.pokemanager.calc.IVResult>,
-        data: com.woojin.pokemanager.ocr.PogoScreenData
-    ) {
-        if (ivResults.isEmpty()) {
-            tvIV.text = "IV 계산 불가\n(포켓몬 데이터 없음)"
-            tvCandidates.text = ""
-            return
-        }
-        val top = ivResults.first()
-        val minPerf = ivResults.last().perfection
-        val maxPerf = top.perfection
-        tvIV.text = buildString {
-            append("Atk ${top.atkIV} / Def ${top.defIV} / Sta ${top.stamIV}\n")
-            append("%.1f%%".format(maxPerf * 100))
-            if (ivResults.size > 1) append(" ~ %.1f%%".format(minPerf * 100))
-            append("  (${ivResults.size}가지 가능)\n")
-            append("Lv %.1f".format(top.level))
-            if (data.dustCost <= 0 && ivResults.size > 3) {
-                append("\n⚠ 별가루 입력하면 후보 좁아짐")
-            }
-        }
-        // 후보 list — 최대 30개까지 표시
-        tvCandidates.text = buildString {
-            append("후보 (perfection 순):\n")
-            ivResults.take(30).forEach { r ->
-                append("  Lv %4.1f  %2d/%2d/%2d  %5.1f%%\n".format(
-                    r.level, r.atkIV, r.defIV, r.stamIV, r.perfection * 100))
-            }
-            if (ivResults.size > 30) append("  … 외 ${ivResults.size - 30}개\n")
+    private fun hideOptionsPanel() {
+        optionsView?.let {
+            try { windowManager?.removeView(it) } catch (_: Exception) {}
+            optionsView = null
         }
     }
 
@@ -570,6 +576,8 @@ class OverlayService : Service() {
         autoScanJob?.cancel()
         scope.cancel()
         removeResultView()
+        hideCloseTarget()
+        hideOptionsPanel()
         fabView?.let { try { windowManager?.removeView(it) } catch (_: Exception) {} }
         virtualDisplay?.release()
         mediaProjection?.stop()
