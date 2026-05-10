@@ -1,0 +1,64 @@
+name: Android APK Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'PokeManager/**'
+      - '.github/workflows/android-build.yml'
+  workflow_dispatch:  # 수동 실행 (Actions 탭 → "Run workflow")
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # release 업로드용
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Sync data assets (1571종 + 메타 + 그룹 + cpm)
+        working-directory: PokeManager
+        run: |
+          # pogo_tiers 의 데이터 파일이 사이트 빌드 워크플로우에서 갱신됨
+          # 이 빌드는 그 데이터를 임베드. 필요하면 fetch_pvpoke 등 다시 실행 가능
+          if [ -f scripts/sync_data.py ] && [ -f ../out/index.html ]; then
+            python3 scripts/sync_data.py || echo "[warn] sync_data 실패 — 기존 assets 사용"
+          fi
+
+      - name: Build Debug APK
+        working-directory: PokeManager
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        working-directory: PokeManager
+        run: |
+          mkdir -p ../out_apk
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             ../out_apk/PokeManager-debug-$(date +%Y%m%d-%H%M).apk
+          ls -lh ../out_apk/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeManager-APK
+          path: out_apk/*.apk
+          retention-days: 30
+
+      - name: Create release on tag push
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out_apk/*.apk
+          generate_release_notes: true

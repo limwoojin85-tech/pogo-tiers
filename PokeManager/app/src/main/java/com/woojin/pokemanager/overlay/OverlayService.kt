@@ -13,6 +13,9 @@ import android.view.*
 import android.widget.*
 import androidx.core.app.NotificationCompat
 import com.woojin.pokemanager.R
+import android.content.ClipData
+import android.content.ClipboardManager
+import com.woojin.pokemanager.calc.BucketClassifier
 import com.woojin.pokemanager.calc.IVCalculator
 import com.woojin.pokemanager.calc.PvPRanker
 import com.woojin.pokemanager.data.AppDatabase
@@ -272,6 +275,32 @@ class OverlayService : Service() {
             }
         } else {
             tvLeague.text = ""
+        }
+
+        // ─── 사이트 8 bucket 결정 — 즉시 표시 (보관 / 송출 등)
+        if (ivResults.isNotEmpty() && species != null) {
+            val top = ivResults.first()
+            val meta = GameMasterRepo.meta(species.id)
+            val groupClass = GameMasterRepo.classifyGroup(species.id)
+            val decision = BucketClassifier.classify(
+                sid = species.id,
+                ivAtk = top.atkIV, ivDef = top.defIV, ivStam = top.stamIV,
+                cp = data.cp,
+                species = meta,
+                groupClass = groupClass
+            )
+            // tvLeague 아래에 결정 라벨 추가
+            tvLeague.text = (tvLeague.text?.toString().orEmpty() +
+                "\n\n📋 결정: ${decision.bucket.label}\n${decision.reason}").trimStart()
+
+            // ─── 자동 클립보드 복사 (Calcy 의 auto-rename 대체)
+            // 형식: "{한글이름}{IV%}" 예: "라프라스95"
+            val perfPct = (top.perfection * 100).toInt()
+            val nickname = "${species.nameKo}${perfPct}"
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("PokeManager", nickname))
+            // 짧은 토스트 — 첫 스캔 시만 (반복 토스트 방지)
+            Toast.makeText(this, "📋 \"${nickname}\" 복사됨", Toast.LENGTH_SHORT).show()
         }
 
         btnClose.setOnClickListener { removeResultView() }
