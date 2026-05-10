@@ -80,8 +80,11 @@ object GameMasterRepo {
 
     fun findByName(name: String): Species? {
         val lower = name.lowercase().trim()
+        val koOnly = name.filter { it.code in 0xAC00..0xD7A3 }
         return speciesList.firstOrNull {
-            it.name.lowercase() == lower || it.nameKo == name.trim() ||
+            it.name.lowercase() == lower ||
+            it.nameKo == name.trim() ||
+            (koOnly.isNotEmpty() && it.nameKo.filter { c -> c.code in 0xAC00..0xD7A3 } == koOnly) ||
             it.id.lowercase() == lower
         }
     }
@@ -89,10 +92,30 @@ object GameMasterRepo {
     fun findByNameFuzzy(name: String): Species? {
         findByName(name)?.let { return it }
         val q = name.trim()
+        if (q.isEmpty()) return null
         val lower = q.lowercase()
-        return speciesList.firstOrNull {
-            it.name.lowercase().contains(lower) || it.nameKo.contains(q)
+        val koOnly = q.filter { it.code in 0xAC00..0xD7A3 }
+
+        // 1순위: 한글 정확/부분 매칭 (변형 폼 / "(쉐도우)" 같은 suffix 무시)
+        if (koOnly.length >= 2) {
+            // a) species 의 nameKo 가 검색어를 포함 (예: "화살꼬빈" → "화살꼬빈" / "화살꼬빈 (쉐도우)")
+            val byPrefix = speciesList.firstOrNull {
+                val nko = it.nameKo.filter { c -> c.code in 0xAC00..0xD7A3 }
+                nko.startsWith(koOnly) || koOnly.startsWith(nko) && nko.length >= 2
+            }
+            if (byPrefix != null) return byPrefix
+            // b) substring contains
+            val byContains = speciesList.firstOrNull { it.nameKo.contains(koOnly) }
+            if (byContains != null) return byContains
         }
+
+        // 2순위: 영문 부분 매칭
+        if (lower.isNotEmpty()) {
+            return speciesList.firstOrNull {
+                it.name.lowercase().contains(lower) || it.nameKo.contains(q)
+            }
+        }
+        return null
     }
 
     fun findByDex(dex: Int): Species? = speciesList.firstOrNull { it.dex == dex }

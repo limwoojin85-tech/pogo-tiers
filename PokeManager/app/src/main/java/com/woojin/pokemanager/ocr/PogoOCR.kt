@@ -82,18 +82,27 @@ object PogoOCR {
     }
 
     // 한글 이름 추출 — 한글이 포함된 라인 중 가장 길고 (5자 이내) 숫자/특수문자 적은 것
+    // 추출 후 한글만 남겨서 정제 (연필 아이콘 ✏, 공백, 기호 제거 → "화살꼬빈 ✏" → "화살꼬빈")
     private fun extractKoreanName(lines: List<String>): String? {
         val koPattern = Regex("[가-힣]")
         val candidates = lines.filter { line ->
             koPattern.containsMatchIn(line)
                 && line.length in 2..15
                 && !line.contains(Regex("""\d{2,}"""))    // 숫자 너무 많은 건 제외 (CP 등)
+                // PokeManager 자체 UI 텍스트 차단 (앱 하나 모드 잘못 선택 시 false-name 방지)
+                && !line.contains("캡처") && !line.contains("오버레이")
+                && !line.contains("포고만") && !line.contains("앱하나")
+                && !line.contains("PokeManager") && !line.contains("pokemanager")
         }
         // 한글 비율 높은 순
-        return candidates.maxByOrNull { line ->
+        val raw = candidates.maxByOrNull { line ->
             val koCount = line.count { it.code in 0xAC00..0xD7A3 }
             koCount * 100 - line.length  // 한글 많고 짧을수록 높음
-        }
+        } ?: return null
+
+        // 한글만 남김 — "화살꼬빈 ✏" → "화살꼬빈"
+        val cleaned = raw.filter { it.code in 0xAC00..0xD7A3 }
+        return if (cleaned.length >= 2) cleaned else raw.trim().takeIf { it.isNotEmpty() }
     }
 
     private fun extractCP(lines: List<String>): Int? {

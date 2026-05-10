@@ -49,6 +49,14 @@
             android:text="앱 하나만 (포고만 캡처)" />
     </RadioGroup>
 
+    <TextView
+        android:layout_width="240dp"
+        android:layout_height="wrap_content"
+        android:textSize="11sp"
+        android:textColor="#D32F2F"
+        android:layout_marginBottom="16dp"
+        android:text="⚠ '앱 하나' 모드 → 권한 다이얼로그에서 반드시 '포켓몬GO' 를 선택하세요 (PokeManager 자체를 선택하면 자기 화면만 캡처됨)" />
+
     <Button
         android:id="@+id/btnToggle"
         android:text="오버레이 시작"
